@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	"strings"
 
 	//batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,11 +97,29 @@ func isSupervisedObject(objMeta metav1.ObjectMeta, labels map[string]string) boo
 }
 
 func isTransientFailure(status corev1.PodStatus) bool {
-	return false // TODO: implement
+	// TODO: check algorithm fatal/transient codes here
+	exitCode := status.ContainerStatuses[0].State.Terminated.ExitCode
+	if exitCode == 137 || exitCode == 255 { // OOM, abnormal termination
+		return false
+	}
+
+	return true
 }
 
 func isScheduling(status corev1.PodStatus) bool {
-	return false // TODO: implement
+	for _, condition := range status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && len(status.Conditions) == 1 {
+			return true
+		}
+		if status.Reason == corev1.PodReasonUnschedulable || status.Reason == corev1.PodReasonSchedulerError {
+			return false
+		}
+		if strings.Contains(status.Message, "ErrImagePull") || strings.Contains(status.Message, "ImagePullBackOff") {
+			return false
+		}
+	}
+
+	return false
 }
 
 func (c *RunStateCache) onPodAdded(obj interface{}) {
@@ -141,7 +160,7 @@ func (c *RunStateCache) onPodUpdated(_, new interface{}) {
 		if isTransientFailure(newPod.Status) {
 			return
 		} else {
-			// handle fatal
+			// TODO: handle fatal: check if algorithm has been reported as failed, if not, update accordingly
 		}
 	}
 
@@ -149,16 +168,16 @@ func (c *RunStateCache) onPodUpdated(_, new interface{}) {
 		if isScheduling(newPod.Status) {
 			return
 		} else {
-			// handle stuck pods
+			// TODO: handle stuck pods: delete the job and set status to failed in the checkpoint store
 		}
 	}
 
 	if newPod.Status.Phase == corev1.PodRunning {
-		// update checkpoint status
+		// TODO: update checkpoint status
 	}
 
 	if newPod.Status.Phase == corev1.PodSucceeded {
-		// update checkpoint status
+		// TODO: log and ignore successful runs, as they are handled by receiver
 	}
 }
 
