@@ -15,8 +15,9 @@ const (
 )
 
 type SupervisorConfig struct {
-	CqlStore       request.AstraBundleConfig `mapstructure:"cql-store"`
-	KubeConfigPath string                    `mapstructure:"kube-config-path"`
+	CqlStore          request.AstraBundleConfig `mapstructure:"cql-store"`
+	KubeConfigPath    string                    `mapstructure:"kube-config-path"`
+	ResourceNamespace string                    `mapstructure:"resource-namespace"`
 }
 
 func LoadConfig(ctx context.Context) SupervisorConfig {

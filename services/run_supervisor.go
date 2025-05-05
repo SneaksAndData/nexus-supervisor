@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	"k8s.io/apimachinery/pkg/types"
 	"strings"
 
 	//batchv1 "k8s.io/api/batch/v1"
@@ -26,6 +27,21 @@ type RunStateCache struct {
 	//jobInformer    cache.SharedIndexInformer
 	prefix         string
 	selectorLabels map[string]string
+}
+
+type DecisionAction = string
+
+const (
+	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
+	ToSkip               = DecisionAction("ToSkip")
+	ToFailFatalError     = DecisionAction("ToFailFatalErrorDecisionAction")
+)
+
+type RunStatusAnalysisResult struct {
+	Action       DecisionAction
+	RunPodStatus *corev1.PodStatus
+	RunPodUID    types.UID
+	RunId        string
 }
 
 // NewRunStateCache creates a new cache + resource watcher for pod and job resources

@@ -15,7 +15,8 @@ func getExpectedConfig(username string) *SupervisorConfig {
 			GatewayUser:                  username,
 			GatewayPassword:              "password",
 		},
-		KubeConfigPath: "/tmp/kube",
+		KubeConfigPath:    "/tmp/kube",
+		ResourceNamespace: "nexus",
 	}
 }
 
