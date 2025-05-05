@@ -18,10 +18,12 @@ import (
 	"time"
 )
 
-type RunStateCache struct {
+type Supervisor struct {
 	logger               klog.Logger
 	factory              kubeinformers.SharedInformerFactory
 	podInformer          cache.SharedIndexInformer
+	kubeClient           kubernetes.Interface
+	resourceNamespace    string
 	cqlStore             *request.CqlStore
 	prefix               string
 	selectorLabels       map[string]string
@@ -42,6 +44,7 @@ type RunStatusAnalysisResult struct {
 	RunPodStatus *corev1.PodStatus
 	RunPodUID    types.UID
 	RunId        string
+	Algorithm    string
 }
 
 func newRunStatusAnalysisResult(pod *corev1.Pod, desiredAction DecisionAction) *RunStatusAnalysisResult {
@@ -50,20 +53,23 @@ func newRunStatusAnalysisResult(pod *corev1.Pod, desiredAction DecisionAction) *
 		RunPodStatus: pod.Status.DeepCopy(),
 		RunPodUID:    pod.UID,
 		RunId:        pod.Spec.Containers[0].Name,
+		Algorithm:    pod.Annotations["science.sneaksanddata.com/algorithm-template-name"], // TODO: move this to framework
 	}
 }
 
-// NewRunStateCache creates a new cache + resource watcher for pod and job resources
-func NewRunStateCache(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *RunStateCache {
+// NewSupervisor creates a new cache + resource watcher for pod and job resources
+func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *Supervisor {
 	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Second*30, kubeinformers.WithNamespace(resourceNamespace))
 	podWatcher := factory.Core().V1().Pods()
 
-	return &RunStateCache{
-		logger:      logger,
-		factory:     factory,
-		podInformer: podWatcher.Informer(),
-		cqlStore:    cqlStore,
-		prefix:      resourceNamespace,
+	return &Supervisor{
+		logger:            logger,
+		factory:           factory,
+		kubeClient:        client,
+		resourceNamespace: resourceNamespace,
+		podInformer:       podWatcher.Informer(),
+		cqlStore:          cqlStore,
+		prefix:            resourceNamespace,
 		selectorLabels: map[string]string{
 			"app.kubernetes.io/component": "algorithm-run",
 		},
@@ -72,7 +78,7 @@ func NewRunStateCache(client *kubernetes.Clientset, resourceNamespace string, cq
 }
 
 // Init starts informers and sync the cache
-func (c *RunStateCache) Init(ctx context.Context) error {
+func (c *Supervisor) Init(ctx context.Context) error {
 	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
 		"supervisor",
 		map[string]string{},
@@ -147,7 +153,7 @@ func isScheduling(status corev1.PodStatus) bool {
 	return false
 }
 
-func (c *RunStateCache) onPodAdded(obj interface{}) {
+func (c *Supervisor) onPodAdded(obj interface{}) {
 	objectRef, err := cache.ObjectToName(obj)
 	if err != nil {
 		utilruntime.HandleError(err)
@@ -166,7 +172,7 @@ func (c *RunStateCache) onPodAdded(obj interface{}) {
 	}
 }
 
-func (c *RunStateCache) onPodUpdated(_, new interface{}) {
+func (c *Supervisor) onPodUpdated(_, new interface{}) {
 	_, newErr := cache.ObjectToName(new)
 
 	if newErr != nil {
@@ -221,21 +227,80 @@ func toLifecycleStage(podState corev1.PodPhase) models.LifecycleStage {
 	}
 }
 
-// TODO: implement actions
-func (c *RunStateCache) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
+func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
 	switch analysisResult.Action {
 	case ToFailStuckInPending:
+		// this decision implies:
+		// remove the k8s job
+		// update run status to failed, setting reason to scheduling failure
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RunId, metav1.DeleteOptions{})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.RunPodUID, err
+		}
 
-		return "", nil
+		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
+			Algorithm:               analysisResult.Algorithm,
+			Id:                      analysisResult.RunId,
+			LifecycleStage:          models.LifecyclestageScheduleTimeout,
+			AlgorithmFailureCause:   "Algorithm submission cannot be scheduled",
+			AlgorithmFailureCode:    models.CB000.ErrorName(),
+			AlgorithmFailureDetails: models.CB000.ErrorMessage(),
+		})
+
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.RunPodUID, err
+		}
+
+		return analysisResult.RunPodUID, nil
 	case ToFailFatalError:
-		return "", nil
+		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
+		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RunId, metav1.DeleteOptions{})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.RunPodUID, err
+		}
+
+		// check if status has been updated
+
+		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
+			Algorithm:               analysisResult.Algorithm,
+			Id:                      analysisResult.RunId,
+			LifecycleStage:          models.LifecyclestageFailed,
+			AlgorithmFailureCause:   "Algorithm encountered a fatal error during execution",
+			AlgorithmFailureCode:    "CAJ000X", // TODO add failure code for this
+			AlgorithmFailureDetails: "Fatal error occurred. Algorithm might need more resources to run through",
+		})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.RunPodUID, err
+		}
+
+		return analysisResult.RunPodUID, nil
+	case ToRunning:
+		// transition to running from buffered
+		err := c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
+			Algorithm:      analysisResult.Algorithm,
+			Id:             analysisResult.RunId,
+			LifecycleStage: models.LifecyclestageRunning,
+		})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.RunPodUID, err
+		}
+
+		return analysisResult.RunPodUID, nil
 	case ToSkip:
-		return "", nil
+		// nothing to do since the run has completed
+		c.logger.V(0).Info("algorithm run completed successfully", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
+		return analysisResult.RunPodUID, nil
 	default:
-		return "", fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
+		return analysisResult.RunPodUID, fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
 	}
 }
 
-func (c *RunStateCache) Start(ctx context.Context) {
+func (c *Supervisor) Start(ctx context.Context) {
 	c.elementReceiverActor.Start(ctx)
 }

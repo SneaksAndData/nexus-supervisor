@@ -11,10 +11,10 @@ import (
 )
 
 type ApplicationServices struct {
-	cqlStore      *request.CqlStore
-	recorder      record.EventRecorder
-	kubeClient    *kubernetes.Clientset
-	runStateCache *services.RunStateCache
+	cqlStore   *request.CqlStore
+	recorder   record.EventRecorder
+	kubeClient *kubernetes.Clientset
+	supervisor *services.Supervisor
 }
 
 func (appServices *ApplicationServices) WithCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
@@ -46,9 +46,9 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 }
 
 func (appServices *ApplicationServices) WithRunStateCache(ctx context.Context, resourceNamespace string) *ApplicationServices {
-	if appServices.runStateCache == nil {
+	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
-		appServices.runStateCache = services.NewRunStateCache(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)
+		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)
 	}
 
 	return appServices
@@ -62,12 +62,12 @@ func (appServices *ApplicationServices) Start(ctx context.Context) {
 	logger := klog.FromContext(ctx)
 	logger.V(0).Info("Starting Nexus Supervisor")
 
-	err := appServices.runStateCache.Init(ctx)
+	err := appServices.supervisor.Init(ctx)
 
 	if err != nil {
 		logger.Error(err, "Fatal error during startup")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	go appServices.runStateCache.Start(ctx)
+	go appServices.supervisor.Start(ctx)
 }
