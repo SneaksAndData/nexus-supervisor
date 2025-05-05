@@ -5,28 +5,27 @@ import (
 	"fmt"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
-	"k8s.io/apimachinery/pkg/types"
-	"strings"
-
-	//batchv1 "k8s.io/api/batch/v1"
+	"github.com/SneaksAndData/nexus-core/pkg/pipeline"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	"strings"
 	"time"
 )
 
 type RunStateCache struct {
-	logger      klog.Logger
-	factory     kubeinformers.SharedInformerFactory
-	podInformer cache.SharedIndexInformer
-	cqlStore    *request.CqlStore
-	//jobInformer    cache.SharedIndexInformer
-	prefix         string
-	selectorLabels map[string]string
+	logger               klog.Logger
+	factory              kubeinformers.SharedInformerFactory
+	podInformer          cache.SharedIndexInformer
+	cqlStore             *request.CqlStore
+	prefix               string
+	selectorLabels       map[string]string
+	elementReceiverActor *pipeline.DefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID]
 }
 
 type DecisionAction = string
@@ -34,7 +33,8 @@ type DecisionAction = string
 const (
 	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
 	ToSkip               = DecisionAction("ToSkip")
-	ToFailFatalError     = DecisionAction("ToFailFatalErrorDecisionAction")
+	ToFailFatalError     = DecisionAction("ToFailFatalError")
+	ToRunning            = DecisionAction("ToRunning")
 )
 
 type RunStatusAnalysisResult struct {
@@ -44,39 +44,51 @@ type RunStatusAnalysisResult struct {
 	RunId        string
 }
 
+func newRunStatusAnalysisResult(pod *corev1.Pod, desiredAction DecisionAction) *RunStatusAnalysisResult {
+	return &RunStatusAnalysisResult{
+		Action:       desiredAction,
+		RunPodStatus: pod.Status.DeepCopy(),
+		RunPodUID:    pod.UID,
+		RunId:        pod.Spec.Containers[0].Name,
+	}
+}
+
 // NewRunStateCache creates a new cache + resource watcher for pod and job resources
 func NewRunStateCache(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *RunStateCache {
 	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Second*30, kubeinformers.WithNamespace(resourceNamespace))
 	podWatcher := factory.Core().V1().Pods()
-	//jobWatcher := factory.Batch().V1().Jobs()
 
 	return &RunStateCache{
 		logger:      logger,
 		factory:     factory,
 		podInformer: podWatcher.Informer(),
 		cqlStore:    cqlStore,
-		//jobInformer: jobWatcher.Informer(),
-		prefix: resourceNamespace,
+		prefix:      resourceNamespace,
 		selectorLabels: map[string]string{
 			"app.kubernetes.io/component": "algorithm-run",
 		},
+		elementReceiverActor: nil,
 	}
 }
 
 // Init starts informers and sync the cache
 func (c *RunStateCache) Init(ctx context.Context) error {
+	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
+		"supervisor",
+		map[string]string{},
+		time.Second*1,
+		time.Second*5,
+		10,
+		100,
+		10,
+		c.superviseAction,
+		nil,
+	)
 	// Set up an event handler for when pod resources change
 	_, podErr := c.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onPodAdded,
 		UpdateFunc: c.onPodUpdated,
 	})
-
-	//// Set up an event handler for when job resources change
-	//_, jobErr := c.jobInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-	//	AddFunc:    c.onJobAdded,
-	//	UpdateFunc: c.onJobUpdated,
-	//	DeleteFunc: c.onJobDeleted,
-	//})
 
 	if podErr != nil {
 		return podErr
@@ -88,9 +100,6 @@ func (c *RunStateCache) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to wait for pod informer caches to sync")
 	}
 
-	//if ok := cache.WaitForCacheSync(ctx.Done(), c.jobInformer.HasSynced); !ok {
-	//	return fmt.Errorf("failed to wait for job informer caches to sync")
-	//}
 	c.logger.Info("Resource informers synced")
 
 	return nil
@@ -176,7 +185,7 @@ func (c *RunStateCache) onPodUpdated(_, new interface{}) {
 		if isTransientFailure(newPod.Status) {
 			return
 		} else {
-			// TODO: handle fatal: check if algorithm has been reported as failed, if not, update accordingly
+			c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToFailFatalError))
 		}
 	}
 
@@ -184,16 +193,16 @@ func (c *RunStateCache) onPodUpdated(_, new interface{}) {
 		if isScheduling(newPod.Status) {
 			return
 		} else {
-			// TODO: handle stuck pods: delete the job and set status to failed in the checkpoint store
+			c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToFailStuckInPending))
 		}
 	}
 
 	if newPod.Status.Phase == corev1.PodRunning {
-		// TODO: update checkpoint status
+		c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToRunning))
 	}
 
 	if newPod.Status.Phase == corev1.PodSucceeded {
-		// TODO: log and ignore successful runs, as they are handled by receiver
+		c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToSkip))
 	}
 }
 
@@ -212,6 +221,21 @@ func toLifecycleStage(podState corev1.PodPhase) models.LifecycleStage {
 	}
 }
 
-//func (c *MachineLearningAlgorithmCache) cacheKey(algorithmName string) string {
-//	return fmt.Sprintf("%s/%s", c.prefix, algorithmName)
-//}
+// TODO: implement actions
+func (c *RunStateCache) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
+	switch analysisResult.Action {
+	case ToFailStuckInPending:
+
+		return "", nil
+	case ToFailFatalError:
+		return "", nil
+	case ToSkip:
+		return "", nil
+	default:
+		return "", fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
+	}
+}
+
+func (c *RunStateCache) Start(ctx context.Context) {
+	c.elementReceiverActor.Start(ctx)
+}
