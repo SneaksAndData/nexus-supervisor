@@ -59,8 +59,7 @@ func (appServices *ApplicationServices) CqlStore() *request.CqlStore {
 	return appServices.cqlStore
 }
 
-func (appServices *ApplicationServices) Start(ctx context.Context, config *SupervisorConfig) {
-	logger := klog.FromContext(ctx)
+func (appServices *ApplicationServices) Start(ctx context.Context, config *SupervisorConfig, logger klog.Logger) {
 	logger.V(0).Info("Starting Nexus Supervisor")
 
 	err := appServices.supervisor.Init(ctx, &services.ProcessingConfig{
