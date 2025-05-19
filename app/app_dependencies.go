@@ -46,7 +46,7 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 	return appServices
 }
 
-func (appServices *ApplicationServices) WithRunStateCache(ctx context.Context, resourceNamespace string) *ApplicationServices {
+func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, resourceNamespace string) *ApplicationServices {
 	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
 		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)

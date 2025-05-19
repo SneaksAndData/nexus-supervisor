@@ -78,6 +78,7 @@ func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlSt
 		podInformer:       podWatcher.Informer(),
 		cqlStore:          cqlStore,
 		prefix:            resourceNamespace,
+		// TODO: move this to constant in the framework
 		selectorLabels: map[string]string{
 			"app.kubernetes.io/component": "algorithm-run",
 		},

@@ -24,7 +24,8 @@ func main() {
 
 	appServices := (&app.ApplicationServices{}).
 		WithCqlStore(ctx, &appConfig.CqlStore).
-		WithKubeClient(ctx, appConfig.KubeConfigPath)
+		WithKubeClient(ctx, appConfig.KubeConfigPath).
+		WithSupervisor(ctx, appConfig.ResourceNamespace)
 
 	appServices.Start(ctx, &appConfig, logger)
 }
