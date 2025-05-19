@@ -165,10 +165,12 @@ func (c *Supervisor) onPodAdded(obj interface{}) {
 		return
 	}
 
-	if algorithm, annotated := obj.(*corev1.Pod).ObjectMeta.Annotations["science.sneaksanddata.com/algorithm-template-name"]; annotated {
-		c.logger.V(3).Info("Algorithm run instance detected", "algorithm", algorithm)
+	algorithmPod := obj.(*corev1.Pod)
+
+	if metav1.HasLabel(obj.(*corev1.Pod).ObjectMeta, models.JobTemplateNameKey) {
+		c.logger.V(3).Info("Algorithm run instance detected", "algorithm", algorithmPod.Spec)
 	} else {
-		c.logger.V(2).Info("Algorithm run instance does not have science.sneaksanddata.com/algorithm-template-name annotations", "runId", objectRef.Name)
+		c.logger.V(2).Info(fmt.Sprintf("Algorithm run instance does not have %s label", models.JobTemplateNameKey), "runId", objectRef.Name)
 	}
 }
 
@@ -242,10 +244,10 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
 			Algorithm:               analysisResult.Algorithm,
 			Id:                      analysisResult.RunId,
-			LifecycleStage:          models.LifecyclestageScheduleTimeout,
-			AlgorithmFailureCause:   "Algorithm submission cannot be scheduled",
-			AlgorithmFailureCode:    models.CB000.ErrorName(),
-			AlgorithmFailureDetails: models.CB000.ErrorMessage(),
+			LifecycleStage:          models.LifecyclestageSchedulingFailed,
+			AlgorithmFailureCause:   "Algorithm submission was buffered, but failed to schedule on the target cluster",
+			AlgorithmFailureCode:    models.NAE000.ErrorName(),
+			AlgorithmFailureDetails: models.NAE000.ErrorMessage(),
 		})
 
 		if err != nil {
@@ -270,7 +272,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			Id:                      analysisResult.RunId,
 			LifecycleStage:          models.LifecyclestageFailed,
 			AlgorithmFailureCause:   "Algorithm encountered a fatal error during execution",
-			AlgorithmFailureCode:    "CAJ000X", // TODO add failure code for this
+			AlgorithmFailureCode:    "NAE111", // TODO add failure code for this
 			AlgorithmFailureDetails: "Fatal error occurred. Algorithm might need more resources to run through",
 		})
 		if err != nil {

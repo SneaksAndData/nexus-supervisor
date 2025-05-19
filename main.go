@@ -2,26 +2,18 @@ package main
 
 import (
 	"context"
-	"flag"
+	nexusconf "github.com/SneaksAndData/nexus-core/pkg/configurations"
 	"github.com/SneaksAndData/nexus-core/pkg/signals"
 	"github.com/SneaksAndData/nexus-core/pkg/telemetry"
 	"github.com/SneaksAndData/nexus-supervisor/app"
 	"k8s.io/klog/v2"
 )
 
-var (
-	logLevel string
-)
+func launchApp(ctx context.Context, config *app.SupervisorConfig) {
 
-func init() {
-	flag.StringVar(&logLevel, "log-level", "INFO", "Log level for the application.")
-}
-
-func launchApp(ctx context.Context) {
-	appConfig := app.LoadConfig(ctx)
 	appServices := (&app.ApplicationServices{}).
-		WithCqlStore(ctx, &appConfig.CqlStore).
-		WithKubeClient(ctx, appConfig.KubeConfigPath)
+		WithCqlStore(ctx, &config.CqlStore).
+		WithKubeClient(ctx, config.KubeConfigPath)
 
 	go func() {
 		appServices.Start(ctx)
@@ -42,7 +34,8 @@ func launchApp(ctx context.Context) {
 
 func main() {
 	ctx := signals.SetupSignalHandler()
-	appLogger, err := telemetry.ConfigureLogger(ctx, map[string]string{}, logLevel)
+	appConfig := nexusconf.LoadConfig[app.SupervisorConfig](ctx)
+	appLogger, err := telemetry.ConfigureLogger(ctx, map[string]string{}, appConfig.LogLevel)
 	ctx = telemetry.WithStatsd(ctx, "nexus_receiver")
 	logger := klog.FromContext(ctx)
 
@@ -52,5 +45,5 @@ func main() {
 
 	klog.SetSlogLogger(appLogger)
 
-	launchApp(ctx)
+	launchApp(ctx, &appConfig)
 }

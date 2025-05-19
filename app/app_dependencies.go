@@ -14,6 +14,7 @@ type ApplicationServices struct {
 	cqlStore   *request.CqlStore
 	recorder   record.EventRecorder
 	kubeClient *kubernetes.Clientset
+	// TODO: Nexus API client also required for loading template definitions (for exit codes etc.)
 	supervisor *services.Supervisor
 }
 
