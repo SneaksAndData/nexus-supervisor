@@ -3,3 +3,4 @@ cql-store: # can be read from environment
   gateway-user: user
   gateway-password: password
 kube-config-path: "/tmp/kube"
+resource-namespace: "nexus"

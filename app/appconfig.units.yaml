@@ -1,5 +1,0 @@
-cql-store: # can be read from environment
-  secure-connection-bundle-base64: base64value
-  gateway-user: user
-  gateway-password: password
-kube-config-path: "/tmp/kube"
