@@ -170,7 +170,7 @@ func (c *Supervisor) onPodAdded(obj interface{}) {
 	}
 
 	// only handle objects with matching labels
-	if !isSupervisedObject(obj.(corev1.Pod).ObjectMeta, c.selectorLabels) {
+	if !isSupervisedObject(obj.(*corev1.Pod).ObjectMeta, c.selectorLabels) {
 		return
 	}
 
