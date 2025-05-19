@@ -22,6 +22,7 @@ type Supervisor struct {
 	logger               klog.Logger
 	factory              kubeinformers.SharedInformerFactory
 	podInformer          cache.SharedIndexInformer
+	eventInformer        cache.SharedIndexInformer
 	kubeClient           kubernetes.Interface
 	resourceNamespace    string
 	cqlStore             *request.CqlStore
@@ -69,6 +70,7 @@ func newRunStatusAnalysisResult(pod *corev1.Pod, desiredAction DecisionAction) *
 func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *Supervisor {
 	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Second*30, kubeinformers.WithNamespace(resourceNamespace))
 	podWatcher := factory.Core().V1().Pods()
+	eventInformer := factory.Core().V1().Events().Informer()
 
 	return &Supervisor{
 		logger:            logger,
@@ -76,6 +78,7 @@ func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlSt
 		kubeClient:        client,
 		resourceNamespace: resourceNamespace,
 		podInformer:       podWatcher.Informer(),
+		eventInformer:     eventInformer,
 		cqlStore:          cqlStore,
 		prefix:            resourceNamespace,
 		// TODO: move this to constant in the framework
@@ -109,9 +112,17 @@ func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 		return podErr
 	}
 
+	_, eventErr := c.eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: c.onEventAdded,
+	})
+
+	if eventErr != nil {
+		return eventErr
+	}
+
 	c.factory.Start(ctx.Done())
 
-	if ok := cache.WaitForCacheSync(ctx.Done(), c.podInformer.HasSynced); !ok {
+	if ok := cache.WaitForCacheSync(ctx.Done(), c.podInformer.HasSynced, c.eventInformer.HasSynced); !ok {
 		return fmt.Errorf("failed to wait for pod informer caches to sync")
 	}
 
@@ -131,6 +142,14 @@ func isSupervisedObject(objMeta metav1.ObjectMeta, labels map[string]string) boo
 		} else {
 			return false
 		}
+	}
+
+	return true
+}
+
+func isSupervisedEvent(event *corev1.Event) bool {
+	if event.InvolvedObject.Kind != "Job" {
+		return false
 	}
 
 	return true
@@ -160,6 +179,39 @@ func isScheduling(status corev1.PodStatus) bool {
 	}
 
 	return false
+}
+
+func (c *Supervisor) onEventAdded(obj interface{}) {
+	_, err := cache.ObjectToName(obj)
+	if err != nil {
+		utilruntime.HandleError(err)
+		return
+	}
+
+	event := obj.(*corev1.Event)
+
+	// only handle objects with matching labels
+	if !isSupervisedEvent(event) {
+		return
+	}
+
+	if event.Reason == "FailedCreate" {
+		c.logger.V(0).Info("Algorithm run attempt failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+		job, err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Get(context.TODO(), event.InvolvedObject.Name, metav1.GetOptions{})
+
+		if err != nil {
+			utilruntime.HandleError(err)
+			return
+		}
+
+		c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+			Action:       ToFailStuckInPending,
+			RunPodStatus: nil,
+			RunPodUID:    types.UID(""),
+			RunId:        event.InvolvedObject.Name,
+			Algorithm:    job.GetLabels()[models.JobTemplateNameKey],
+		})
+	}
 }
 
 func (c *Supervisor) onPodAdded(obj interface{}) {
@@ -198,7 +250,7 @@ func (c *Supervisor) onPodUpdated(_, new interface{}) {
 	}
 
 	if newPod.Status.Phase == corev1.PodFailed {
-		c.logger.V(2).Info("Algorithm run attempt failed", "requestId", newPod.Spec.Containers[0].Name, "reason", newPod.Status.Reason, "message", newPod.Status.Message)
+		c.logger.V(0).Info("Algorithm run attempt failed", "requestId", newPod.Spec.Containers[0].Name, "reason", newPod.Status.Reason, "message", newPod.Status.Message)
 		if isTransientFailure(newPod.Status) {
 			return
 		} else {
