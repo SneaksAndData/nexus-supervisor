@@ -32,13 +32,13 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 		logger := klog.FromContext(ctx)
 		kubeCfg, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 		if err != nil {
-			logger.Error(err, "Error building in-cluster kubeconfig for the scheduler")
+			logger.Error(err, "Error building in-cluster kubeconfig for the application")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 
 		appServices.kubeClient, err = kubernetes.NewForConfig(kubeCfg)
 		if err != nil {
-			logger.Error(err, "Error building in-cluster kubernetes clientset for the scheduler")
+			logger.Error(err, "Error building in-cluster kubernetes clientset for the application")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 	}

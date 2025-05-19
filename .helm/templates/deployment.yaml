@@ -12,7 +12,7 @@ spec:
   selector:
     matchLabels:
       {{- include "app.selectorLabels" $ | nindent 6 }}
-  replicas: {{ .Values.scheduler.replicas | default 1 }}
+  replicas: {{ .Values.supervisor.replicas | default 1 }}
   strategy:
     type: RollingUpdate
   template:
@@ -94,14 +94,10 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
         {{- if .Values.extraEnvFrom }}
-          envFrom:
-          {{- if .Values.scheduler.config.s3Buffer.s3Credentials.secretRefEnabled }}
+          envFrom:       
+          {{- if .Values.supervisor.config.cqlStore.secretRefEnabled }}
             - secretRef:
-                name: {{ .Values.scheduler.config.s3Buffer.s3Credentials.secretName }}
-          {{- end }}            
-          {{- if .Values.scheduler.config.cqlStore.secretRefEnabled }}
-            - secretRef:
-                name: {{ .Values.scheduler.config.cqlStore.secretName }}
+                name: {{ .Values.supervisor.config.cqlStore.secretName }}
           {{- end }}
           {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
