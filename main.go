@@ -16,7 +16,7 @@ func launchApp(ctx context.Context, config *app.SupervisorConfig) {
 		WithKubeClient(ctx, config.KubeConfigPath)
 
 	go func() {
-		appServices.Start(ctx)
+		appServices.Start(ctx, config)
 		// handle exit
 		logger := klog.FromContext(ctx)
 		reason := ctx.Err()
