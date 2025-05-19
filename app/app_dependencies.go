@@ -76,5 +76,5 @@ func (appServices *ApplicationServices) Start(ctx context.Context, config *Super
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	go appServices.supervisor.Start(ctx)
+	appServices.supervisor.Start(ctx)
 }
