@@ -203,7 +203,7 @@ datadog:
   apiKeySecretKey: "secretKey"
   
   # Datadog Service Name parameter
-  serviceName: "nexus"
+  serviceName: "nexus-supervisor"
   
   # value to use as a DogStatsd server url
   # Examples: udp://127.0.0.1:8125 or unix:///path/to/dsd.socket
