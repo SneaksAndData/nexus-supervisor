@@ -59,11 +59,17 @@ func (appServices *ApplicationServices) CqlStore() *request.CqlStore {
 	return appServices.cqlStore
 }
 
-func (appServices *ApplicationServices) Start(ctx context.Context) {
+func (appServices *ApplicationServices) Start(ctx context.Context, config *SupervisorConfig) {
 	logger := klog.FromContext(ctx)
 	logger.V(0).Info("Starting Nexus Supervisor")
 
-	err := appServices.supervisor.Init(ctx)
+	err := appServices.supervisor.Init(ctx, &services.ProcessingConfig{
+		FailureRateBaseDelay:       config.FailureRateBaseDelay,
+		FailureRateMaxDelay:        config.FailureRateMaxDelay,
+		RateLimitElementsPerSecond: config.RateLimitElementsPerSecond,
+		RateLimitElementsBurst:     config.RateLimitElementsBurst,
+		Workers:                    config.Workers,
+	})
 
 	if err != nil {
 		logger.Error(err, "Fatal error during startup")

@@ -30,6 +30,14 @@ type Supervisor struct {
 	elementReceiverActor *pipeline.DefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID]
 }
 
+type ProcessingConfig struct {
+	FailureRateBaseDelay       time.Duration
+	FailureRateMaxDelay        time.Duration
+	RateLimitElementsPerSecond int
+	RateLimitElementsBurst     int
+	Workers                    int
+}
+
 type DecisionAction = string
 
 const (
@@ -78,15 +86,15 @@ func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlSt
 }
 
 // Init starts informers and sync the cache
-func (c *Supervisor) Init(ctx context.Context) error {
+func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
 		"supervisor",
 		map[string]string{},
-		time.Second*1,
-		time.Second*5,
-		10,
-		100,
-		10,
+		config.FailureRateBaseDelay,
+		config.FailureRateMaxDelay,
+		config.RateLimitElementsPerSecond,
+		config.RateLimitElementsBurst,
+		config.Workers,
 		c.superviseAction,
 		nil,
 	)
@@ -282,7 +290,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		return analysisResult.RunPodUID, nil
 	case ToRunning:
-		// transition to running from buffered
+		// transition from buffered to running
 		err := c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
 			Algorithm:      analysisResult.Algorithm,
 			Id:             analysisResult.RunId,

@@ -1,0 +1,28 @@
+{{- if .Values.rbac.clusterRole.templateReader.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "app.clusteRole.templateReader" . }}
+  labels:
+    {{- include "app.labels" $ | nindent 4 }}
+    {{- with .Values.rbac.clusterRole.templateReader.additionalLabels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.rbac.clusterRole.templateReader.additionalAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - verbs:
+      - list
+      - watch
+      - get 
+    apiGroups:
+      - "science.sneaksanddata.com"
+    resources:
+      - events
+      - nexusalgorithmtemplates
+      - nexusalgorithmtemplates/status
+      - nexusalgorithmtemplate
+      - nexusalgorithmtemplate/status
+{{- end }}
