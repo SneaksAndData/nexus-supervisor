@@ -118,17 +118,12 @@ securityContext: {}
 logging:
   level: INFO
   
-# Run mode for Gin. Set to `release` for production deployments
-# Available values: debug, test, release
-ginMode: debug
-
-# Nexus Scheduler configurations
+# Nexus Supervisor configurations
 supervisor:
   
   # Number of supervisor replicas. Increase to support higher (1000+) pod numbers
   replicas: 1
          
-  # Scheduler configuration
   # Individual settings can be overridden using environment variables
   # Whole config can also be overridden by setting config.enabled=false and mounting a new appconfig.yaml to /app path in the container
   config:   
