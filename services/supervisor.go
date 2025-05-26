@@ -184,7 +184,17 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RunStatusTrace:   "",
 				ObjectUID:        event.InvolvedObject.UID,
 				ObjectKind:       event.InvolvedObject.Kind,
-				RequestId:        event.InvolvedObject.Name,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
+				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
+			})
+		case "FailedScheduling":
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToSkip,
+				RunStatusMessage: "",
+				RunStatusTrace:   "",
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
 		default:
@@ -194,7 +204,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
 				ObjectKind:       event.InvolvedObject.Kind,
-				RequestId:        event.InvolvedObject.Name,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
 		}
