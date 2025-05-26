@@ -203,6 +203,20 @@ func (c *Supervisor) onEvent(obj interface{}) {
 
 func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
 	propagationPolicy := metav1.DeletePropagationBackground
+
+	checkpoint, err := c.cqlStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
+	if err != nil {
+		c.logger.V(0).Error(err, "no checkpoint exists for the provided request, job will be deleted without metadata saved", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+
+		_ = c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+
+		return analysisResult.ObjectUID, err
+	}
+
+	checkpointClone := checkpoint.DeepCopy()
+
 	switch analysisResult.Action {
 	case ToFailStuckInPending:
 		// this decision implies:
@@ -217,13 +231,11 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			return analysisResult.ObjectUID, err
 		}
 
-		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:               analysisResult.Algorithm,
-			Id:                      analysisResult.RequestId,
-			LifecycleStage:          models.LifecycleStageSchedulingFailed,
-			AlgorithmFailureCause:   fmt.Sprintf("Algorithm submission was buffered, but failed to schedule on the target cluster: %s", analysisResult.RunStatusMessage),
-			AlgorithmFailureDetails: analysisResult.RunStatusTrace,
-		})
+		checkpointClone.LifecycleStage = models.LifecycleStageSchedulingFailed
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm submission was buffered, but failed to schedule on the target cluster: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil {
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
@@ -231,6 +243,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		}
 
 		return analysisResult.ObjectUID, nil
+
 	case ToFailFatalError:
 		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
 		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
@@ -244,13 +257,12 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		// check if status has been updated
 
-		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:               analysisResult.Algorithm,
-			Id:                      analysisResult.RequestId,
-			LifecycleStage:          models.LifecycleStageFailed,
-			AlgorithmFailureCause:   fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage),
-			AlgorithmFailureDetails: analysisResult.RunStatusTrace,
-		})
+		checkpointClone.LifecycleStage = models.LifecycleStageFailed
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+
 		if err != nil {
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
@@ -258,12 +270,9 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		return analysisResult.ObjectUID, nil
 	case ToRunning:
+		checkpointClone.LifecycleStage = models.LifecycleStageRunning
 		// transition from buffered to running
-		err := c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:      analysisResult.Algorithm,
-			Id:             analysisResult.RequestId,
-			LifecycleStage: models.LifecycleStageRunning,
-		})
+		err := c.cqlStore.UpsertCheckpoint(checkpointClone)
 		if err != nil {
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
