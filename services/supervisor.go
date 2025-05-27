@@ -201,7 +201,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			})
 		default:
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToFailFatalError,
+				Action:           ToSkip,
 				RunStatusMessage: event.Reason,
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
@@ -209,6 +209,15 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
+			//c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+			//	Action:           ToFailFatalError,
+			//	RunStatusMessage: event.Reason,
+			//	RunStatusTrace:   event.Message,
+			//	ObjectUID:        event.InvolvedObject.UID,
+			//	ObjectKind:       event.InvolvedObject.Kind,
+			//	RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
+			//	Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
+			//})
 		}
 	}
 }
