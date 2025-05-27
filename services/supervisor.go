@@ -44,7 +44,6 @@ type DecisionAction = string
 
 const (
 	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
-	ToSkip               = DecisionAction("ToSkip")
 	ToFailFatalError     = DecisionAction("ToFailFatalError")
 	ToRunning            = DecisionAction("ToRunning")
 )
@@ -176,8 +175,6 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			return
 		}
 
-		// TODO: move reasons to a configuration?
-
 		switch event.Reason {
 		case "Started":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
@@ -191,17 +188,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			})
 		case "Failed":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToFailFatalError,
-				RunStatusMessage: event.Reason,
-				RunStatusTrace:   event.Message,
-				ObjectUID:        event.InvolvedObject.UID,
-				ObjectKind:       event.InvolvedObject.Kind,
-				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
-				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
-			})
-		case "FailedScheduling", "Nominated", "Scheduled":
-			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToSkip,
+				Action:           ToFailStuckInPending,
 				RunStatusMessage: event.Reason,
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
@@ -210,24 +197,8 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
 		default:
-			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToSkip,
-				RunStatusMessage: event.Reason,
-				RunStatusTrace:   event.Message,
-				ObjectUID:        event.InvolvedObject.UID,
-				ObjectKind:       event.InvolvedObject.Kind,
-				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
-				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
-			})
-			//c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-			//	Action:           ToFailFatalError,
-			//	RunStatusMessage: event.Reason,
-			//	RunStatusTrace:   event.Message,
-			//	ObjectUID:        event.InvolvedObject.UID,
-			//	ObjectKind:       event.InvolvedObject.Kind,
-			//	RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
-			//	Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
-			//})
+			// nothing to do since the run has completed or has not started yet
+			c.logger.V(1).Info("no-op event, ignoring", "requestId", pod.Labels["batch.kubernetes.io/job-name"], "algorithm", pod.GetLabels()[models.JobTemplateNameKey], "reason", event.Reason, "message", event.Message)
 		}
 	}
 }
@@ -263,7 +234,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		}
 
 		checkpointClone.LifecycleStage = models.LifecycleStageSchedulingFailed
-		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm submission was buffered, but failed to schedule on the target cluster: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm submission was buffered, but failed to launch on the target cluster: %s", analysisResult.RunStatusMessage)
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
@@ -309,10 +280,6 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			return analysisResult.ObjectUID, err
 		}
 
-		return analysisResult.ObjectUID, nil
-	case ToSkip:
-		// nothing to do since the run has completed or has not started yet
-		c.logger.V(0).Info("no-op event, ignoring", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 		return analysisResult.ObjectUID, nil
 	default:
 		return analysisResult.ObjectUID, fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
