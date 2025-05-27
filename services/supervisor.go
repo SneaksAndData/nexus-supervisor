@@ -182,18 +182,18 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		case "Started":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
 				Action:           ToRunning,
-				RunStatusMessage: "",
-				RunStatusTrace:   "",
+				RunStatusMessage: event.Reason,
+				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
 				ObjectKind:       event.InvolvedObject.Kind,
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
-		case "FailedScheduling", "Nominated":
+		case "FailedScheduling", "Nominated", "Scheduled":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
 				Action:           ToSkip,
-				RunStatusMessage: "",
-				RunStatusTrace:   "",
+				RunStatusMessage: event.Reason,
+				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
 				ObjectKind:       event.InvolvedObject.Kind,
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
