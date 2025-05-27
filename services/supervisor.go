@@ -189,9 +189,9 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
-		case "FailedScheduling", "Nominated", "Scheduled":
+		case "Failed":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToSkip,
+				Action:           ToFailFatalError,
 				RunStatusMessage: event.Reason,
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
@@ -199,9 +199,9 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
-		case "Failed":
+		case "FailedScheduling", "Nominated", "Scheduled":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-				Action:           ToFailFatalError,
+				Action:           ToSkip,
 				RunStatusMessage: event.Reason,
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
