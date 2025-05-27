@@ -176,6 +176,8 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			return
 		}
 
+		// TODO: move reasons to a configuration?
+
 		switch event.Reason {
 		case "Started":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
@@ -187,7 +189,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
 				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
 			})
-		case "FailedScheduling":
+		case "FailedScheduling", "Nominated":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
 				Action:           ToSkip,
 				RunStatusMessage: "",
@@ -290,8 +292,8 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		return analysisResult.ObjectUID, nil
 	case ToSkip:
-		// nothing to do since the run has completed
-		c.logger.V(0).Info("algorithm run completed successfully", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+		// nothing to do since the run has completed or has not started yet
+		c.logger.V(0).Info("no-op event, ignoring", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 		return analysisResult.ObjectUID, nil
 	default:
 		return analysisResult.ObjectUID, fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
