@@ -6,6 +6,8 @@ import (
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
 	"github.com/SneaksAndData/nexus-core/pkg/pipeline"
+	"github.com/SneaksAndData/nexus-core/pkg/resolvers"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -14,19 +16,19 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	"strings"
 	"time"
 )
 
 type Supervisor struct {
 	logger               klog.Logger
 	factory              kubeinformers.SharedInformerFactory
+	eventInformer        cache.SharedIndexInformer
 	podInformer          cache.SharedIndexInformer
+	jobInformer          cache.SharedIndexInformer
+	informers            map[string]cache.SharedIndexInformer
 	kubeClient           kubernetes.Interface
 	resourceNamespace    string
 	cqlStore             *request.CqlStore
-	prefix               string
-	selectorLabels       map[string]string
 	elementReceiverActor *pipeline.DefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID]
 }
 
@@ -42,45 +44,36 @@ type DecisionAction = string
 
 const (
 	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
-	ToSkip               = DecisionAction("ToSkip")
 	ToFailFatalError     = DecisionAction("ToFailFatalError")
 	ToRunning            = DecisionAction("ToRunning")
 )
 
 type RunStatusAnalysisResult struct {
-	Action       DecisionAction
-	RunPodStatus *corev1.PodStatus
-	RunPodUID    types.UID
-	RunId        string
-	Algorithm    string
-}
-
-func newRunStatusAnalysisResult(pod *corev1.Pod, desiredAction DecisionAction) *RunStatusAnalysisResult {
-	return &RunStatusAnalysisResult{
-		Action:       desiredAction,
-		RunPodStatus: pod.Status.DeepCopy(),
-		RunPodUID:    pod.UID,
-		RunId:        pod.Spec.Containers[0].Name,
-		Algorithm:    pod.Annotations["science.sneaksanddata.com/algorithm-template-name"], // TODO: move this to framework
-	}
+	Action           DecisionAction
+	RunStatusMessage string
+	RunStatusTrace   string
+	ObjectUID        types.UID
+	ObjectKind       string
+	RequestId        string
+	Algorithm        string
 }
 
 // NewSupervisor creates a new cache + resource watcher for pod and job resources
 func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *Supervisor {
 	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Second*30, kubeinformers.WithNamespace(resourceNamespace))
-	podWatcher := factory.Core().V1().Pods()
+	eventInformer := factory.Core().V1().Events().Informer()
+	podInformer := factory.Core().V1().Pods().Informer()
+	jobInformer := factory.Batch().V1().Jobs().Informer()
 
 	return &Supervisor{
-		logger:            logger,
-		factory:           factory,
-		kubeClient:        client,
-		resourceNamespace: resourceNamespace,
-		podInformer:       podWatcher.Informer(),
-		cqlStore:          cqlStore,
-		prefix:            resourceNamespace,
-		selectorLabels: map[string]string{
-			"app.kubernetes.io/component": "algorithm-run",
-		},
+		logger:               logger,
+		factory:              factory,
+		kubeClient:           client,
+		resourceNamespace:    resourceNamespace,
+		eventInformer:        eventInformer,
+		podInformer:          podInformer,
+		jobInformer:          jobInformer,
+		cqlStore:             cqlStore,
 		elementReceiverActor: nil,
 	}
 }
@@ -98,19 +91,23 @@ func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 		c.superviseAction,
 		nil,
 	)
-	// Set up an event handler for when pod resources change
-	_, podErr := c.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    c.onPodAdded,
-		UpdateFunc: c.onPodUpdated,
+
+	c.informers = map[string]cache.SharedIndexInformer{
+		"Job": c.jobInformer,
+		"Pod": c.podInformer,
+	}
+
+	_, eventErr := c.eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: c.onEvent,
 	})
 
-	if podErr != nil {
-		return podErr
+	if eventErr != nil {
+		return eventErr
 	}
 
 	c.factory.Start(ctx.Done())
 
-	if ok := cache.WaitForCacheSync(ctx.Done(), c.podInformer.HasSynced); !ok {
+	if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok {
 		return fmt.Errorf("failed to wait for pod informer caches to sync")
 	}
 
@@ -119,195 +116,173 @@ func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 	return nil
 }
 
-func isSupervisedObject(objMeta metav1.ObjectMeta, labels map[string]string) bool {
-	// only use objects with matching labels
-	objectLabels := objMeta.Labels
-	for labelKey, labelValue := range labels {
-		if objectLabelValue, exists := objectLabels[labelKey]; exists {
-			if objectLabelValue != labelValue {
-				return false
-			}
-		} else {
-			return false
-		}
-	}
-
-	return true
-}
-
-func isTransientFailure(status corev1.PodStatus) bool {
-	// TODO: check algorithm fatal/transient codes here
-	exitCode := status.ContainerStatuses[0].State.Terminated.ExitCode
-	if exitCode == 137 || exitCode == 255 { // OOM, abnormal termination
-		return false
-	}
-
-	return true
-}
-
-func isScheduling(status corev1.PodStatus) bool {
-	for _, condition := range status.Conditions {
-		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && len(status.Conditions) == 1 {
-			return true
-		}
-		if status.Reason == corev1.PodReasonUnschedulable || status.Reason == corev1.PodReasonSchedulerError {
-			return false
-		}
-		if strings.Contains(status.Message, "ErrImagePull") || strings.Contains(status.Message, "ImagePullBackOff") {
-			return false
-		}
-	}
-
-	return false
-}
-
-func (c *Supervisor) onPodAdded(obj interface{}) {
-	objectRef, err := cache.ObjectToName(obj)
+func (c *Supervisor) onEvent(obj interface{}) {
+	_, err := cache.ObjectToName(obj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
 
-	// only handle objects with matching labels
-	if !isSupervisedObject(obj.(corev1.Pod).ObjectMeta, c.selectorLabels) {
+	event := obj.(*corev1.Event)
+
+	supervised, err := resolvers.IsNexusRunEvent(event, c.resourceNamespace, c.informers)
+
+	if err != nil {
+		utilruntime.HandleError(err)
 		return
 	}
 
-	algorithmPod := obj.(*corev1.Pod)
-
-	if metav1.HasLabel(obj.(*corev1.Pod).ObjectMeta, models.JobTemplateNameKey) {
-		c.logger.V(3).Info("Algorithm run instance detected", "algorithm", algorithmPod.Spec)
-	} else {
-		c.logger.V(2).Info(fmt.Sprintf("Algorithm run instance does not have %s label", models.JobTemplateNameKey), "runId", objectRef.Name)
-	}
-}
-
-func (c *Supervisor) onPodUpdated(_, new interface{}) {
-	_, newErr := cache.ObjectToName(new)
-
-	if newErr != nil {
-		utilruntime.HandleError(newErr)
+	// only handle events from Nexus runs
+	if !supervised {
 		return
 	}
 
-	newPod := new.(*corev1.Pod)
-	// only handle objects with matching labels
-	if !isSupervisedObject(newPod.ObjectMeta, c.selectorLabels) {
-		return
-	}
-
-	if newPod.Status.Phase == corev1.PodFailed {
-		c.logger.V(2).Info("Algorithm run attempt failed", "requestId", newPod.Spec.Containers[0].Name, "reason", newPod.Status.Reason, "message", newPod.Status.Message)
-		if isTransientFailure(newPod.Status) {
+	if event.InvolvedObject.Kind == "Job" && event.Reason == "FailedCreate" {
+		job, cacheErr := resolvers.GetCachedObject[batchv1.Job](event.InvolvedObject.Name, c.resourceNamespace, c.jobInformer)
+		if job == nil {
+			c.logger.V(0).Info("Algorithm job not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			return
-		} else {
-			c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToFailFatalError))
 		}
-	}
 
-	if newPod.Status.Phase == corev1.PodPending {
-		if isScheduling(newPod.Status) {
+		if cacheErr != nil {
+			utilruntime.HandleError(cacheErr)
 			return
-		} else {
-			c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToFailStuckInPending))
 		}
+
+		c.logger.V(0).Info("Algorithm run attempt failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+
+		c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+			Action:           ToFailStuckInPending,
+			RunStatusMessage: "Unable to launch a new submission for the algorithm - please review configuration and try again.",
+			RunStatusTrace:   event.Message,
+			ObjectUID:        event.InvolvedObject.UID,
+			ObjectKind:       event.InvolvedObject.Kind,
+			RequestId:        event.InvolvedObject.Name,
+			Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+		})
 	}
 
-	if newPod.Status.Phase == corev1.PodRunning {
-		c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToRunning))
-	}
+	if event.InvolvedObject.Kind == "Pod" {
+		pod, cacheErr := resolvers.GetCachedObject[corev1.Pod](event.InvolvedObject.Name, c.resourceNamespace, c.podInformer)
 
-	if newPod.Status.Phase == corev1.PodSucceeded {
-		c.elementReceiverActor.Receive(newRunStatusAnalysisResult(newPod, ToSkip))
-	}
-}
+		if cacheErr != nil {
+			utilruntime.HandleError(cacheErr)
+			return
+		}
 
-func toLifecycleStage(podState corev1.PodPhase) models.LifecycleStage {
-	switch podState {
-	case corev1.PodPending:
-		return models.LifecyclestageBuffered
-	case corev1.PodRunning:
-		return models.LifecyclestageRunning
-	case corev1.PodSucceeded:
-		return models.LifecyclestageCompleted
-	case corev1.PodFailed:
-		return models.LifecyclestageFailed
-	default:
-		return models.LifecyclestageBuffered
+		if pod == nil {
+			c.logger.V(0).Info("Algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			return
+		}
+
+		switch event.Reason {
+		case "Started":
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToRunning,
+				RunStatusMessage: event.Reason,
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
+				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
+			})
+		case "Failed":
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailStuckInPending,
+				RunStatusMessage: event.Reason,
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
+				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
+			})
+		default:
+			// nothing to do since the run has completed or has not started yet
+			c.logger.V(1).Info("no-op event, ignoring", "requestId", pod.Labels["batch.kubernetes.io/job-name"], "algorithm", pod.GetLabels()[models.JobTemplateNameKey], "reason", event.Reason, "message", event.Message)
+		}
 	}
 }
 
 func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
+	propagationPolicy := metav1.DeletePropagationBackground
+
+	checkpoint, err := c.cqlStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
+	if err != nil {
+		c.logger.V(0).Error(err, "no checkpoint exists for the provided request, job will be deleted without metadata saved", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+
+		_ = c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+
+		return analysisResult.ObjectUID, err
+	}
+
+	checkpointClone := checkpoint.DeepCopy()
+
 	switch analysisResult.Action {
 	case ToFailStuckInPending:
 		// this decision implies:
 		// remove the k8s job
 		// update run status to failed, setting reason to scheduling failure
-		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RunId, metav1.DeleteOptions{})
-		if err != nil {
-			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.RunPodUID, err
-		}
 
-		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:               analysisResult.Algorithm,
-			Id:                      analysisResult.RunId,
-			LifecycleStage:          models.LifecyclestageSchedulingFailed,
-			AlgorithmFailureCause:   "Algorithm submission was buffered, but failed to schedule on the target cluster",
-			AlgorithmFailureCode:    models.NAE000.ErrorName(),
-			AlgorithmFailureDetails: models.NAE000.ErrorMessage(),
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
 		})
-
 		if err != nil {
-			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.RunPodUID, err
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
 		}
 
-		return analysisResult.RunPodUID, nil
+		checkpointClone.LifecycleStage = models.LifecycleStageSchedulingFailed
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm submission was buffered, but failed to launch on the target cluster: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
+		}
+
+		return analysisResult.ObjectUID, nil
+
 	case ToFailFatalError:
 		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
 		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
-		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RunId, metav1.DeleteOptions{})
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
 		if err != nil {
-			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.RunPodUID, err
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
 		}
 
 		// check if status has been updated
 
-		err = c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:               analysisResult.Algorithm,
-			Id:                      analysisResult.RunId,
-			LifecycleStage:          models.LifecyclestageFailed,
-			AlgorithmFailureCause:   "Algorithm encountered a fatal error during execution",
-			AlgorithmFailureCode:    "NAE111", // TODO add failure code for this
-			AlgorithmFailureDetails: "Fatal error occurred. Algorithm might need more resources to run through",
-		})
+		checkpointClone.LifecycleStage = models.LifecycleStageFailed
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+
 		if err != nil {
-			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.RunPodUID, err
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
 		}
 
-		return analysisResult.RunPodUID, nil
+		return analysisResult.ObjectUID, nil
 	case ToRunning:
+		checkpointClone.LifecycleStage = models.LifecycleStageRunning
 		// transition from buffered to running
-		err := c.cqlStore.UpsertCheckpoint(&models.CheckpointedRequest{
-			Algorithm:      analysisResult.Algorithm,
-			Id:             analysisResult.RunId,
-			LifecycleStage: models.LifecyclestageRunning,
-		})
+		err := c.cqlStore.UpsertCheckpoint(checkpointClone)
 		if err != nil {
-			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.RunPodUID, err
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
 		}
 
-		return analysisResult.RunPodUID, nil
-	case ToSkip:
-		// nothing to do since the run has completed
-		c.logger.V(0).Info("algorithm run completed successfully", "requestId", analysisResult.RunId, "algorithm", analysisResult.Algorithm)
-		return analysisResult.RunPodUID, nil
+		return analysisResult.ObjectUID, nil
 	default:
-		return analysisResult.RunPodUID, fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
+		return analysisResult.ObjectUID, fmt.Errorf("unknown analysis result action: %v", analysisResult.Action)
 	}
 }
 

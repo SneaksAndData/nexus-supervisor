@@ -32,13 +32,13 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 		logger := klog.FromContext(ctx)
 		kubeCfg, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 		if err != nil {
-			logger.Error(err, "Error building in-cluster kubeconfig for the scheduler")
+			logger.Error(err, "Error building in-cluster kubeconfig for the application")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 
 		appServices.kubeClient, err = kubernetes.NewForConfig(kubeCfg)
 		if err != nil {
-			logger.Error(err, "Error building in-cluster kubernetes clientset for the scheduler")
+			logger.Error(err, "Error building in-cluster kubernetes clientset for the application")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 	}
@@ -46,7 +46,7 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 	return appServices
 }
 
-func (appServices *ApplicationServices) WithRunStateCache(ctx context.Context, resourceNamespace string) *ApplicationServices {
+func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, resourceNamespace string) *ApplicationServices {
 	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
 		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)
@@ -59,8 +59,7 @@ func (appServices *ApplicationServices) CqlStore() *request.CqlStore {
 	return appServices.cqlStore
 }
 
-func (appServices *ApplicationServices) Start(ctx context.Context, config *SupervisorConfig) {
-	logger := klog.FromContext(ctx)
+func (appServices *ApplicationServices) Start(ctx context.Context, config *SupervisorConfig, logger klog.Logger) {
 	logger.V(0).Info("Starting Nexus Supervisor")
 
 	err := appServices.supervisor.Init(ctx, &services.ProcessingConfig{
@@ -76,5 +75,5 @@ func (appServices *ApplicationServices) Start(ctx context.Context, config *Super
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	go appServices.supervisor.Start(ctx)
+	appServices.supervisor.Start(ctx)
 }
