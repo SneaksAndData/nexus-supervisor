@@ -43,9 +43,10 @@ type ProcessingConfig struct {
 type DecisionAction = string
 
 const (
-	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
-	ToFailFatalError     = DecisionAction("ToFailFatalError")
-	ToRunning            = DecisionAction("ToRunning")
+	ToFailStuckInPending   = DecisionAction("ToFailStuckInPending")
+	ToFailFatalError       = DecisionAction("ToFailFatalError")
+	ToFailDeadlineExceeded = DecisionAction("ToFailDeadlineExceeded")
+	ToRunning              = DecisionAction("ToRunning")
 )
 
 type RunStatusAnalysisResult struct {
@@ -137,7 +138,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		return
 	}
 
-	if event.InvolvedObject.Kind == "Job" && event.Reason == "FailedCreate" {
+	if event.InvolvedObject.Kind == "Job" {
 		job, cacheErr := resolvers.GetCachedObject[batchv1.Job](event.InvolvedObject.Name, c.resourceNamespace, c.jobInformer)
 		if job == nil {
 			c.logger.V(0).Info("Algorithm job not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
@@ -149,17 +150,33 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			return
 		}
 
-		c.logger.V(0).Info("Algorithm run attempt failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
-
-		c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-			Action:           ToFailStuckInPending,
-			RunStatusMessage: "Unable to launch a new submission for the algorithm - please review configuration and try again.",
-			RunStatusTrace:   event.Message,
-			ObjectUID:        event.InvolvedObject.UID,
-			ObjectKind:       event.InvolvedObject.Kind,
-			RequestId:        event.InvolvedObject.Name,
-			Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
-		})
+		switch event.Reason {
+		case "FailedCreate":
+			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailStuckInPending,
+				RunStatusMessage: "Unable to launch a container for the algorithm - please review configuration and try again.",
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        event.InvolvedObject.Name,
+				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+			})
+		case "DeadlineExceeded":
+			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailDeadlineExceeded,
+				RunStatusMessage: "Algorithm exceeded its max allowed run time limit.",
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        event.InvolvedObject.Name,
+				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+			})
+			return
+		default:
+			return
+		}
 	}
 
 	if event.InvolvedObject.Kind == "Pod" {
@@ -171,7 +188,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		}
 
 		if pod == nil {
-			c.logger.V(0).Info("Algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.logger.V(0).Info("algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			return
 		}
 
