@@ -162,18 +162,17 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        event.InvolvedObject.Name,
 				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
 			})
-		case "DeadlineExceeded":
+		case "DeadlineExceeded", "BackoffLimitExceeded":
 			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
 				Action:           ToFailDeadlineExceeded,
-				RunStatusMessage: "Algorithm exceeded its max allowed run time limit.",
+				RunStatusMessage: "Algorithm exceeded its max allowed run time limit or retry attempt count.",
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
 				ObjectKind:       event.InvolvedObject.Kind,
 				RequestId:        event.InvolvedObject.Name,
 				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
 			})
-			return
 		default:
 			return
 		}
@@ -278,6 +277,31 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		checkpointClone.LifecycleStage = models.LifecycleStageFailed
 		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
+		}
+
+		return analysisResult.ObjectUID, nil
+	case ToFailDeadlineExceeded:
+		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
+		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
+		}
+
+		// check if status has been updated
+
+		checkpointClone.LifecycleStage = models.LifecycleStageDeadlineExceeded
+		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm ran past the execution deadline or ran out of retries: %s", analysisResult.RunStatusMessage)
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
