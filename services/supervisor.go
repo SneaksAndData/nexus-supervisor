@@ -301,7 +301,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		// check if status has been updated
 
 		checkpointClone.LifecycleStage = models.LifecycleStageDeadlineExceeded
-		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm ran past the execution deadline or ran out of retries: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureCause = analysisResult.RunStatusMessage
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
