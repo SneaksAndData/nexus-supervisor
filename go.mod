@@ -3,7 +3,7 @@ module github.com/SneaksAndData/nexus-supervisor
 go 1.23.1
 
 require (
-	github.com/SneaksAndData/nexus-core v1.0.1-0.20250526095605-11c8beca2450
+	github.com/SneaksAndData/nexus-core v1.0.1-0.20250603102422-3fb984a8c3fa
 	k8s.io/api v0.32.1
 	k8s.io/apimachinery v0.32.1
 	k8s.io/client-go v0.32.1
