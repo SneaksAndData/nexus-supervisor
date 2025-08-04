@@ -43,9 +43,10 @@ type ProcessingConfig struct {
 type DecisionAction = string
 
 const (
-	ToFailStuckInPending = DecisionAction("ToFailStuckInPending")
-	ToFailFatalError     = DecisionAction("ToFailFatalError")
-	ToRunning            = DecisionAction("ToRunning")
+	ToFailStuckInPending   = DecisionAction("ToFailStuckInPending")
+	ToFailFatalError       = DecisionAction("ToFailFatalError")
+	ToFailDeadlineExceeded = DecisionAction("ToFailDeadlineExceeded")
+	ToRunning              = DecisionAction("ToRunning")
 )
 
 type RunStatusAnalysisResult struct {
@@ -137,7 +138,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		return
 	}
 
-	if event.InvolvedObject.Kind == "Job" && event.Reason == "FailedCreate" {
+	if event.InvolvedObject.Kind == "Job" {
 		job, cacheErr := resolvers.GetCachedObject[batchv1.Job](event.InvolvedObject.Name, c.resourceNamespace, c.jobInformer)
 		if job == nil {
 			c.logger.V(0).Info("Algorithm job not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
@@ -149,17 +150,32 @@ func (c *Supervisor) onEvent(obj interface{}) {
 			return
 		}
 
-		c.logger.V(0).Info("Algorithm run attempt failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
-
-		c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
-			Action:           ToFailStuckInPending,
-			RunStatusMessage: "Unable to launch a new submission for the algorithm - please review configuration and try again.",
-			RunStatusTrace:   event.Message,
-			ObjectUID:        event.InvolvedObject.UID,
-			ObjectKind:       event.InvolvedObject.Kind,
-			RequestId:        event.InvolvedObject.Name,
-			Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
-		})
+		switch event.Reason {
+		case "FailedCreate":
+			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailStuckInPending,
+				RunStatusMessage: "Unable to launch a container for the algorithm - please review configuration and try again.",
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        event.InvolvedObject.Name,
+				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+			})
+		case "DeadlineExceeded", "BackoffLimitExceeded":
+			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailDeadlineExceeded,
+				RunStatusMessage: "Algorithm exceeded its max allowed run time limit or retry attempt count.",
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        event.InvolvedObject.Name,
+				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+			})
+		default:
+			return
+		}
 	}
 
 	if event.InvolvedObject.Kind == "Pod" {
@@ -171,7 +187,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		}
 
 		if pod == nil {
-			c.logger.V(0).Info("Algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.logger.V(0).Info("algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			return
 		}
 
@@ -261,6 +277,31 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		checkpointClone.LifecycleStage = models.LifecycleStageFailed
 		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage)
+		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
+
+		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
+		}
+
+		return analysisResult.ObjectUID, nil
+	case ToFailDeadlineExceeded:
+		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
+		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
+		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+		if err != nil {
+			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+			return analysisResult.ObjectUID, err
+		}
+
+		// check if status has been updated
+
+		checkpointClone.LifecycleStage = models.LifecycleStageDeadlineExceeded
+		checkpointClone.AlgorithmFailureCause = analysisResult.RunStatusMessage
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
