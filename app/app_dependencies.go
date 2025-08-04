@@ -18,10 +18,19 @@ type ApplicationServices struct {
 	supervisor *services.Supervisor
 }
 
-func (appServices *ApplicationServices) WithCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
+func (appServices *ApplicationServices) WithAstraCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
 	if appServices.cqlStore == nil {
 		logger := klog.FromContext(ctx)
 		appServices.cqlStore = request.NewAstraCqlStore(logger, bundleConfig)
+	}
+
+	return appServices
+}
+
+func (appServices *ApplicationServices) WithScyllaCqlStore(ctx context.Context, config *request.ScyllaCqlStoreConfig) *ApplicationServices {
+	if appServices.cqlStore == nil {
+		logger := klog.FromContext(ctx)
+		appServices.cqlStore = request.NewScyllaCqlStore(logger, config)
 	}
 
 	return appServices
