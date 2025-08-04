@@ -1,7 +1,14 @@
-cql-store:
+astra-cql-store:
   secure-connection-bundle-base64: ""
   gateway-user: ""
   gateway-password: ""
+scylla-cql-store:
+  hosts: []
+  port: ""
+  user: ""
+  password: ""
+  local-dc: ""
+cql-store-type: astra
 kube-config-path: ""
 resource-namespace: ""
 log-level: ""
