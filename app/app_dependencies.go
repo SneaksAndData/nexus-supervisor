@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	nexuscore "github.com/SneaksAndData/nexus-core/pkg/generated/clientset/versioned"
 	"github.com/SneaksAndData/nexus-supervisor/services"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -10,11 +11,10 @@ import (
 )
 
 type ApplicationServices struct {
-	cqlStore *request.CqlStore
-	// recorder   record.EventRecorder
-	kubeClient *kubernetes.Clientset
-	// TODO: Nexus API client also required for loading template definitions (for exit codes etc.)
-	supervisor *services.Supervisor
+	cqlStore    *request.CqlStore
+	kubeClient  *kubernetes.Clientset
+	nexusClient *nexuscore.Clientset
+	supervisor  *services.Supervisor
 }
 
 func (appServices *ApplicationServices) WithAstraCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
@@ -49,6 +49,12 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 			logger.Error(err, "Error building in-cluster kubernetes clientset for the application")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
+
+		appServices.nexusClient, err = nexuscore.NewForConfig(kubeCfg)
+		if err != nil {
+			logger.Error(err, "Error building in-cluster Nexus API clientset for the application")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
 	}
 
 	return appServices
@@ -57,7 +63,7 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, resourceNamespace string) *ApplicationServices {
 	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
-		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)
+		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, appServices.nexusClient, resourceNamespace, appServices.cqlStore, logger, nil)
 	}
 
 	return appServices

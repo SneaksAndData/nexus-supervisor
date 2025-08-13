@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	nexuscore "github.com/SneaksAndData/nexus-core/pkg/generated/clientset/versioned"
+	nexusinf "github.com/SneaksAndData/nexus-core/pkg/generated/informers/externalversions"
 	"github.com/SneaksAndData/nexus-core/pkg/pipeline"
 	"github.com/SneaksAndData/nexus-core/pkg/resolvers"
+	"github.com/SneaksAndData/nexus-core/pkg/util"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,8 +28,10 @@ type Supervisor struct {
 	eventInformer        cache.SharedIndexInformer
 	podInformer          cache.SharedIndexInformer
 	jobInformer          cache.SharedIndexInformer
+	templateInformer     cache.SharedIndexInformer
 	informers            map[string]cache.SharedIndexInformer
 	kubeClient           kubernetes.Interface
+	nexusClient          nexuscore.Interface
 	resourceNamespace    string
 	cqlStore             *request.CqlStore
 	elementReceiverActor *pipeline.DefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID]
@@ -60,20 +65,26 @@ type RunStatusAnalysisResult struct {
 }
 
 // NewSupervisor creates a new cache + resource watcher for pod and job resources
-func NewSupervisor(client *kubernetes.Clientset, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger) *Supervisor {
-	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Second*30, kubeinformers.WithNamespace(resourceNamespace))
+func NewSupervisor(client kubernetes.Interface, nexusClient nexuscore.Interface, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger, resyncPeriod *time.Duration) *Supervisor {
+	defaultResyncPeriod := time.Second * 30
+	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, *util.CoalescePointer(resyncPeriod, &defaultResyncPeriod), kubeinformers.WithNamespace(resourceNamespace))
+	nexusFactory := nexusinf.NewSharedInformerFactoryWithOptions(nexusClient, *util.CoalescePointer(resyncPeriod, &defaultResyncPeriod), nexusinf.WithNamespace(resourceNamespace))
+
 	eventInformer := factory.Core().V1().Events().Informer()
 	podInformer := factory.Core().V1().Pods().Informer()
 	jobInformer := factory.Batch().V1().Jobs().Informer()
+	templateInformer := nexusFactory.Science().V1().NexusAlgorithmTemplates().Informer()
 
 	return &Supervisor{
 		logger:               logger,
 		factory:              factory,
 		kubeClient:           client,
+		nexusClient:          nexusClient,
 		resourceNamespace:    resourceNamespace,
 		eventInformer:        eventInformer,
 		podInformer:          podInformer,
 		jobInformer:          jobInformer,
+		templateInformer:     templateInformer,
 		cqlStore:             cqlStore,
 		elementReceiverActor: nil,
 	}
@@ -328,5 +339,5 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 }
 
 func (c *Supervisor) Start(ctx context.Context) {
-	c.elementReceiverActor.Start(ctx)
+	c.elementReceiverActor.Start(ctx, nil)
 }
