@@ -91,7 +91,7 @@ func NewSupervisor(client kubernetes.Interface, nexusClient nexuscore.Interface,
 }
 
 // Init starts informers and sync the cache
-func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
+func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
 		"supervisor",
 		map[string]string{},
@@ -116,14 +116,6 @@ func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 	if eventErr != nil {
 		return eventErr
 	}
-
-	c.factory.Start(ctx.Done())
-
-	if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok {
-		return fmt.Errorf("failed to wait for pod informer caches to sync")
-	}
-
-	c.logger.Info("Resource informers synced")
 
 	return nil
 }
@@ -339,5 +331,15 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 }
 
 func (c *Supervisor) Start(ctx context.Context) {
-	c.elementReceiverActor.Start(ctx, nil)
+	c.elementReceiverActor.Start(ctx, pipeline.NewActorPostStart(func(ctx context.Context) error {
+		c.factory.Start(ctx.Done())
+
+		if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok {
+			return fmt.Errorf("failed to wait for pod informer caches to sync")
+		}
+
+		c.logger.Info("resource informers synced")
+
+		return nil
+	}))
 }
