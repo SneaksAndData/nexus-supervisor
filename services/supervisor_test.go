@@ -23,7 +23,7 @@ var noResyncPeriod = time.Second * 0
 type fixture struct {
 	supervisor  *Supervisor
 	ctx         context.Context
-	cancelFunc  context.CancelFunc
+	finish      context.CancelFunc
 	kubeClient  kubernetes.Interface
 	nexusClient nexuscore.Interface
 	cqlStore    *request.CqlStore
@@ -33,7 +33,7 @@ func newFixture(t *testing.T, k8sObjects []runtime.Object, nexusObjects []runtim
 	_, ctx := ktesting.NewTestContext(t)
 	f := &fixture{}
 
-	f.ctx, f.cancelFunc = context.WithCancel(ctx)
+	f.ctx, f.finish = context.WithCancel(ctx)
 	f.cqlStore = request.NewScyllaCqlStore(
 		klog.FromContext(ctx), &request.ScyllaCqlStoreConfig{
 			Hosts: []string{"127.0.0.1"},
@@ -117,7 +117,7 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 		t.FailNow()
 	}
 
-	f.cancelFunc()
+	f.finish()
 
 	time.Sleep(time.Second * 1)
 }
@@ -246,7 +246,84 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 		t.FailNow()
 	}
 
-	f.cancelFunc()
+	f.finish()
+
+	time.Sleep(time.Second * 1)
+}
+
+func TestSupervisor_PodStarted(t *testing.T) {
+	event := &corev1.Event{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Event",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "nexus",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:      "Pod",
+			Name:      "4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b-acdey",
+			Namespace: "nexus",
+		},
+		Reason:  "Started",
+		Message: "",
+	}
+
+	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b-acdey",
+			Namespace: "nexus",
+			Labels: map[string]string{
+				models.NexusComponentLabel:     models.JobLabelAlgorithmRun,
+				models.JobTemplateNameKey:      "test-algorithm",
+				"batch.kubernetes.io/job-name": "4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b",
+			},
+		},
+		Spec: corev1.PodSpec{},
+	}
+
+	k8sObjects := []runtime.Object{event, pod}
+
+	f := newFixture(t, k8sObjects, []runtime.Object{})
+	err := f.supervisor.Init(f.ctx, &ProcessingConfig{
+		FailureRateBaseDelay:       time.Second,
+		FailureRateMaxDelay:        time.Second * 2,
+		RateLimitElementsPerSecond: 10,
+		RateLimitElementsBurst:     10,
+		Workers:                    2,
+	})
+
+	if err != nil {
+		t.Errorf("supervisor init failed %v", err)
+	}
+
+	go f.supervisor.Start(f.ctx)
+
+	time.Sleep(time.Second * 3)
+
+	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")
+
+	if err != nil {
+		t.Errorf("cannot read a checkpoint %v", err)
+		t.FailNow()
+	}
+
+	if result == nil {
+		t.Errorf("result should not be nil")
+		t.FailNow()
+	}
+
+	if result.LifecycleStage != models.LifecycleStageRunning {
+		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageRunning, result.LifecycleStage)
+		t.FailNow()
+	}
+
+	f.finish()
 
 	time.Sleep(time.Second * 1)
 }

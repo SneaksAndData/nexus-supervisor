@@ -54,3 +54,12 @@ VALUES ('test-algorithm', '3c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2b', 'RUNNING', 'ht
         NULL, NULL, NULL, 'host123', '2023-10-02T10:00:00.000Z',
         '2023-10-02T10:30:00.000Z', '{}', '{}', 'buffered_hash', '2023-10-02T10:45:00.000Z',
         'tag_123', 'v2.0', '1f7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a', '{}', '15m');
+
+INSERT INTO nexus.checkpoints (algorithm, id, lifecycle_stage, payload_uri, result_uri, algorithm_failure_cause,
+                               algorithm_failure_details, received_by_host, received_at, sent_at, applied_configuration,
+                               configuration_overrides, content_hash, last_modified, tag, api_version,
+                               job_uid, parent_job, payload_valid_for)
+VALUES ('test-algorithm', '4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b', 'BUFFERED', 'http://localhost/payload',
+        NULL, NULL, NULL, 'host123', '2023-10-02T10:00:00.000Z',
+        '2023-10-02T10:30:00.000Z', '{}', '{}', 'buffered_hash', '2023-10-02T10:45:00.000Z',
+        'tag_123', 'v2.0', '1f7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a', '{}', '15m');
