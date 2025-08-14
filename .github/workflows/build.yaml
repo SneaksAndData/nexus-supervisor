@@ -52,7 +52,7 @@ jobs:
       - name: Test
         env:
           APPLICATION_ENVIRONMENT: units
-        run: go test -p 1 ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+        run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
         
       - name: Visualise Coverage
         if: ${{ github.ref != 'refs/heads/main' && always() }}

@@ -23,6 +23,7 @@ var noResyncPeriod = time.Second * 0
 type fixture struct {
 	supervisor  *Supervisor
 	ctx         context.Context
+	cancelFunc  context.CancelFunc
 	kubeClient  kubernetes.Interface
 	nexusClient nexuscore.Interface
 	cqlStore    *request.CqlStore
@@ -32,7 +33,7 @@ func newFixture(t *testing.T, k8sObjects []runtime.Object, nexusObjects []runtim
 	_, ctx := ktesting.NewTestContext(t)
 	f := &fixture{}
 
-	f.ctx = ctx
+	f.ctx, f.cancelFunc = context.WithCancel(ctx)
 	f.cqlStore = request.NewScyllaCqlStore(
 		klog.FromContext(ctx), &request.ScyllaCqlStoreConfig{
 			Hosts: []string{"127.0.0.1"},
@@ -115,6 +116,10 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageSchedulingFailed, result.LifecycleStage)
 		t.FailNow()
 	}
+
+	f.cancelFunc()
+
+	time.Sleep(time.Second * 1)
 }
 
 func TestSupervisor_JobDeadlined(t *testing.T) {
@@ -211,7 +216,7 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 6)
+	time.Sleep(time.Second * 3)
 
 	result1, err1 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "2c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a")
 	result2, err2 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "3c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2b")
@@ -240,4 +245,8 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 		t.Errorf("lifecycle stage for %s should be %s, but is %s", result2.Id, models.LifecycleStageDeadlineExceeded, result2.LifecycleStage)
 		t.FailNow()
 	}
+
+	f.cancelFunc()
+
+	time.Sleep(time.Second * 1)
 }
