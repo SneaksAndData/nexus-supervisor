@@ -97,7 +97,7 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 3)
 
 	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "f47ac10b-58cc-4372-a567-0e02b2c3d479")
 
@@ -211,7 +211,7 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 6)
 
 	result1, err1 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "2c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a")
 	result2, err2 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "3c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2b")
@@ -232,12 +232,12 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 	}
 
 	if result1.LifecycleStage != models.LifecycleStageDeadlineExceeded {
-		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageDeadlineExceeded, result1.LifecycleStage)
+		t.Errorf("lifecycle stage for %s should be %s, but is %s", result1.Id, models.LifecycleStageDeadlineExceeded, result1.LifecycleStage)
 		t.FailNow()
 	}
 
 	if result2.LifecycleStage != models.LifecycleStageDeadlineExceeded {
-		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageDeadlineExceeded, result2.LifecycleStage)
+		t.Errorf("lifecycle stage for %s should be %s, but is %s", result2.Id, models.LifecycleStageDeadlineExceeded, result2.LifecycleStage)
 		t.FailNow()
 	}
 }
