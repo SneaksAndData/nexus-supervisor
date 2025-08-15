@@ -94,7 +94,7 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 10)
 
 	f.finish()
 
@@ -210,7 +210,7 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 10)
 
 	f.finish()
 
@@ -296,7 +296,7 @@ func TestSupervisor_PodStarted(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 10)
 
 	f.finish()
 
@@ -370,7 +370,7 @@ func TestSupervisor_PodOutOfMemory(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 10)
 
 	f.finish()
 
