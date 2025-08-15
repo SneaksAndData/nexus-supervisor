@@ -96,6 +96,8 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 
 	time.Sleep(time.Second * 3)
 
+	f.finish()
+
 	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "f47ac10b-58cc-4372-a567-0e02b2c3d479")
 
 	if err != nil {
@@ -112,10 +114,6 @@ func TestSupervisor_JobFailedCreate(t *testing.T) {
 		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageSchedulingFailed, result.LifecycleStage)
 		t.FailNow()
 	}
-
-	f.finish()
-
-	time.Sleep(time.Second * 1)
 }
 
 func TestSupervisor_JobDeadlined(t *testing.T) {
@@ -214,6 +212,8 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 
 	time.Sleep(time.Second * 3)
 
+	f.finish()
+
 	result1, err1 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "2c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a")
 	result2, err2 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "3c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2b")
 
@@ -241,10 +241,6 @@ func TestSupervisor_JobDeadlined(t *testing.T) {
 		t.Errorf("lifecycle stage for %s should be %s, but is %s", result2.Id, models.LifecycleStageDeadlineExceeded, result2.LifecycleStage)
 		t.FailNow()
 	}
-
-	f.finish()
-
-	time.Sleep(time.Second * 1)
 }
 
 func TestSupervisor_PodStarted(t *testing.T) {
@@ -302,6 +298,8 @@ func TestSupervisor_PodStarted(t *testing.T) {
 
 	time.Sleep(time.Second * 3)
 
+	f.finish()
+
 	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "4c7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")
 
 	if err != nil {
@@ -318,10 +316,6 @@ func TestSupervisor_PodStarted(t *testing.T) {
 		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageRunning, result.LifecycleStage)
 		t.FailNow()
 	}
-
-	f.finish()
-
-	time.Sleep(time.Second * 1)
 }
 
 func TestSupervisor_PodOutOfMemory(t *testing.T) {
@@ -378,6 +372,8 @@ func TestSupervisor_PodOutOfMemory(t *testing.T) {
 
 	time.Sleep(time.Second * 3)
 
+	f.finish()
+
 	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", "1d7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")
 
 	if err != nil {
@@ -394,8 +390,4 @@ func TestSupervisor_PodOutOfMemory(t *testing.T) {
 		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageFailed, result.LifecycleStage)
 		t.FailNow()
 	}
-
-	f.finish()
-
-	time.Sleep(time.Second * 1)
 }
