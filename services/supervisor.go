@@ -176,6 +176,17 @@ func (c *Supervisor) onEvent(obj interface{}) {
 				RequestId:        event.InvolvedObject.Name,
 				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
 			})
+		case "PodFailurePolicy":
+			c.logger.V(0).Info("Algorithm run failed", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailFatalError,
+				RunStatusMessage: "Algorithm encountered a fatal error during execution.",
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        event.InvolvedObject.Name,
+				Algorithm:        job.GetLabels()[models.JobTemplateNameKey],
+			})
 		default:
 			return
 		}
@@ -208,6 +219,16 @@ func (c *Supervisor) onEvent(obj interface{}) {
 		case "Failed":
 			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
 				Action:           ToFailStuckInPending,
+				RunStatusMessage: event.Reason,
+				RunStatusTrace:   event.Message,
+				ObjectUID:        event.InvolvedObject.UID,
+				ObjectKind:       event.InvolvedObject.Kind,
+				RequestId:        pod.Labels["batch.kubernetes.io/job-name"],
+				Algorithm:        pod.GetLabels()[models.JobTemplateNameKey],
+			})
+		case "BackOff":
+			c.elementReceiverActor.Receive(&RunStatusAnalysisResult{
+				Action:           ToFailFatalError,
 				RunStatusMessage: event.Reason,
 				RunStatusTrace:   event.Message,
 				ObjectUID:        event.InvolvedObject.UID,
@@ -267,7 +288,8 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 	case ToFailFatalError:
 		// edge case that is invoked when a non-recoverable error occurs, but is not marked by the algorithm as fatal
-		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases
+		// this mainly applies to 137 (out-of-memory) and 255 (unknown fatal error) cases that are handled by PodFailurePolicy
+		// in this case supervisor simply needs to state the obvious and update the job status
 		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
