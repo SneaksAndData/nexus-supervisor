@@ -72,12 +72,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
-Generate the Template reader cluster role name
+Generate cluster role with necessary permissions
 */}}
-{{- define "app.clusteRole.templateReader" -}}
+{{- define "app.clusteRole.supervisor" -}}
 {{- if .Values.rbac.clusterRole.templateReader.nameOverride }}
 {{- .Values.rbac.clusterRole.templateReader.nameOverride }}
 {{- else }}
-{{- printf "%s-template-editor" (include "app.fullname" .) }}
+{{- printf "%s-api-access" (include "app.fullname" .) }}
 {{- end }}
 {{- end }}
