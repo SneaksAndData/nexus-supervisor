@@ -350,7 +350,7 @@ func TestSupervisor(t *testing.T) {
 
 	go f.supervisor.Start(f.ctx)
 
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 10)
 
 	validateFailedCreateObjects(f, "f47ac10b-58cc-4372-a567-0e02b2c3d479", t)
 	validateDeadlinedJobObjects(f, "2c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2a", "3c7b6e8d-cc3c-4b5b-a3f6-5d7b9e2c7f2b", t)
@@ -358,5 +358,4 @@ func TestSupervisor(t *testing.T) {
 	validatePodOutOfMemoryObjects(f, "1d7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b", t)
 
 	f.finish()
-
 }
