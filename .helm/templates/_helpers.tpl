@@ -75,8 +75,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Generate cluster role with necessary permissions
 */}}
 {{- define "app.clusteRole.supervisor" -}}
-{{- if .Values.rbac.clusterRole.templateReader.nameOverride }}
-{{- .Values.rbac.clusterRole.templateReader.nameOverride }}
+{{- if .Values.rbac.clusterRole.supervisor.nameOverride }}
+{{- .Values.rbac.clusterRole.supervisor.nameOverride }}
 {{- else }}
 {{- printf "%s-api-access" (include "app.fullname" .) }}
 {{- end }}
