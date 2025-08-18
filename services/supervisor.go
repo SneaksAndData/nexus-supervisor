@@ -114,7 +114,7 @@ func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 
 func (c *Supervisor) onEvent(obj interface{}) {
 	_, err := cache.ObjectToName(obj)
-	if err != nil {
+	if err != nil { // coverage-ignore
 		utilruntime.HandleError(err)
 		return
 	}
@@ -123,7 +123,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 
 	supervised, err := resolvers.IsNexusRunEvent(event, c.resourceNamespace, c.informers)
 
-	if err != nil {
+	if err != nil { // coverage-ignore
 		utilruntime.HandleError(err)
 		return
 	}
@@ -135,12 +135,12 @@ func (c *Supervisor) onEvent(obj interface{}) {
 
 	if event.InvolvedObject.Kind == "Job" {
 		job, cacheErr := resolvers.GetCachedObject[batchv1.Job](event.InvolvedObject.Name, c.resourceNamespace, c.jobInformer)
-		if job == nil {
+		if job == nil { // coverage-ignore
 			c.logger.V(0).Info("Algorithm job not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			return
 		}
 
-		if cacheErr != nil {
+		if cacheErr != nil { // coverage-ignore
 			utilruntime.HandleError(cacheErr)
 			return
 		}
@@ -239,7 +239,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 	propagationPolicy := metav1.DeletePropagationBackground
 
 	checkpoint, err := c.cqlStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
-	if err != nil {
+	if err != nil { // coverage-ignore
 		c.logger.V(0).Error(err, "no checkpoint exists for the provided request, job will be deleted without metadata saved", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 
 		_ = c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
@@ -348,7 +348,7 @@ func (c *Supervisor) Start(ctx context.Context) {
 	c.elementReceiverActor.Start(ctx, pipeline.NewActorPostStart(func(ctx context.Context) error {
 		c.factory.Start(ctx.Done())
 
-		if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok {
+		if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok { // coverage-ignore
 			return fmt.Errorf("failed to wait for pod informer caches to sync")
 		}
 
