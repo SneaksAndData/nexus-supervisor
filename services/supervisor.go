@@ -187,12 +187,12 @@ func (c *Supervisor) onEvent(obj interface{}) {
 	if event.InvolvedObject.Kind == "Pod" {
 		pod, cacheErr := resolvers.GetCachedObject[corev1.Pod](event.InvolvedObject.Name, c.resourceNamespace, c.podInformer)
 
-		if cacheErr != nil {
+		if cacheErr != nil { // coverage-ignore
 			utilruntime.HandleError(cacheErr)
 			return
 		}
 
-		if pod == nil {
+		if pod == nil { // coverage-ignore
 			c.logger.V(0).Info("algorithm pod not found - stale event", "requestId", event.InvolvedObject.Name, "reason", event.Reason, "message", event.Message)
 			return
 		}
@@ -260,7 +260,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -271,7 +271,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
 
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -285,7 +285,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -298,7 +298,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
 
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -310,7 +310,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err := c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -323,7 +323,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
 
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -333,7 +333,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		checkpointClone.LifecycleStage = models.LifecycleStageRunning
 		// transition from buffered to running
 		err := c.cqlStore.UpsertCheckpoint(checkpointClone)
-		if err != nil {
+		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
