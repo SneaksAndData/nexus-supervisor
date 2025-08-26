@@ -55,7 +55,7 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, resourceNamespace string) *ApplicationServices {
 	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
-		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger, nil)
+		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger, nil, nil)
 	}
 
 	return appServices

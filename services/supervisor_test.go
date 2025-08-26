@@ -18,6 +18,7 @@ import (
 )
 
 var noResyncPeriod = time.Second * 0
+var alwaysReady = func() bool { return true }
 
 type fixture struct {
 	supervisor *Supervisor
@@ -36,11 +37,8 @@ func newFixture(t *testing.T, k8sObjects []runtime.Object) *fixture {
 		klog.FromContext(ctx), &request.ScyllaCqlStoreConfig{
 			Hosts: []string{"127.0.0.1"},
 		})
-	f.kubeClient = fake.NewClientset(k8sObjects...)
-
-	time.Sleep(time.Second)
-
-	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.cqlStore, klog.FromContext(f.ctx), &noResyncPeriod)
+	f.kubeClient = fake.NewSimpleClientset(k8sObjects...)
+	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.cqlStore, klog.FromContext(f.ctx), &noResyncPeriod, &alwaysReady)
 
 	return f
 }

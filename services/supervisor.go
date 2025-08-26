@@ -21,12 +21,17 @@ import (
 )
 
 type Supervisor struct {
-	logger               klog.Logger
-	factory              kubeinformers.SharedInformerFactory
-	eventInformer        cache.SharedIndexInformer
-	podInformer          cache.SharedIndexInformer
-	jobInformer          cache.SharedIndexInformer
-	informers            map[string]cache.SharedIndexInformer
+	logger        klog.Logger
+	factory       kubeinformers.SharedInformerFactory
+	eventInformer cache.SharedIndexInformer
+	podInformer   cache.SharedIndexInformer
+	jobInformer   cache.SharedIndexInformer
+	informers     map[string]cache.SharedIndexInformer
+
+	eventInformerSynced cache.InformerSynced
+	podInformerSynced   cache.InformerSynced
+	jobInformerSynced   cache.InformerSynced
+
 	kubeClient           kubernetes.Interface
 	resourceNamespace    string
 	cqlStore             *request.CqlStore
@@ -61,7 +66,7 @@ type RunStatusAnalysisResult struct {
 }
 
 // NewSupervisor creates a new cache + resource watcher for pod and job resources
-func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger, resyncPeriod *time.Duration) *Supervisor {
+func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger, resyncPeriod *time.Duration, syncState *func() bool) *Supervisor {
 	defaultResyncPeriod := time.Second * 30
 	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, *util.CoalescePointer(resyncPeriod, &defaultResyncPeriod), kubeinformers.WithNamespace(resourceNamespace))
 
@@ -69,14 +74,29 @@ func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlSto
 	podInformer := factory.Core().V1().Pods().Informer()
 	jobInformer := factory.Batch().V1().Jobs().Informer()
 
+	eventInformerSynced := eventInformer.HasSynced
+	podInformerSynced := podInformer.HasSynced
+	jobInformerSynced := jobInformer.HasSynced
+
+	if syncState != nil {
+		eventInformerSynced = *syncState
+		podInformerSynced = *syncState
+		jobInformerSynced = *syncState
+	}
+
 	return &Supervisor{
-		logger:               logger,
-		factory:              factory,
-		kubeClient:           client,
-		resourceNamespace:    resourceNamespace,
-		eventInformer:        eventInformer,
-		podInformer:          podInformer,
-		jobInformer:          jobInformer,
+		logger:            logger,
+		factory:           factory,
+		kubeClient:        client,
+		resourceNamespace: resourceNamespace,
+		eventInformer:     eventInformer,
+		podInformer:       podInformer,
+		jobInformer:       jobInformer,
+
+		eventInformerSynced: eventInformerSynced,
+		podInformerSynced:   podInformerSynced,
+		jobInformerSynced:   jobInformerSynced,
+
 		cqlStore:             cqlStore,
 		elementReceiverActor: nil,
 	}
@@ -354,7 +374,7 @@ func (c *Supervisor) Start(ctx context.Context) {
 	c.elementReceiverActor.Start(ctx, pipeline.NewActorPostStart(func(ctx context.Context) error {
 		c.factory.Start(ctx.Done())
 
-		if ok := cache.WaitForCacheSync(ctx.Done(), c.eventInformer.HasSynced, c.podInformer.HasSynced, c.jobInformer.HasSynced); !ok { // coverage-ignore
+		if ok := cache.WaitForCacheSync(ctx.Done(), c.podInformerSynced, c.jobInformerSynced, c.eventInformerSynced); !ok { // coverage-ignore
 			return fmt.Errorf("failed to wait for pod informer caches to sync")
 		}
 
