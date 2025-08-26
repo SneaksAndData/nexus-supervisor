@@ -6,22 +6,28 @@ import (
 	"github.com/SneaksAndData/nexus-supervisor/services"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 )
 
 type ApplicationServices struct {
 	cqlStore   *request.CqlStore
-	recorder   record.EventRecorder
 	kubeClient *kubernetes.Clientset
-	// TODO: Nexus API client also required for loading template definitions (for exit codes etc.)
 	supervisor *services.Supervisor
 }
 
-func (appServices *ApplicationServices) WithCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
+func (appServices *ApplicationServices) WithAstraCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
 	if appServices.cqlStore == nil {
 		logger := klog.FromContext(ctx)
 		appServices.cqlStore = request.NewAstraCqlStore(logger, bundleConfig)
+	}
+
+	return appServices
+}
+
+func (appServices *ApplicationServices) WithScyllaCqlStore(ctx context.Context, config *request.ScyllaCqlStoreConfig) *ApplicationServices {
+	if appServices.cqlStore == nil {
+		logger := klog.FromContext(ctx)
+		appServices.cqlStore = request.NewScyllaCqlStore(logger, config)
 	}
 
 	return appServices
@@ -49,7 +55,7 @@ func (appServices *ApplicationServices) WithKubeClient(ctx context.Context, kube
 func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, resourceNamespace string) *ApplicationServices {
 	if appServices.supervisor == nil {
 		logger := klog.FromContext(ctx)
-		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger)
+		appServices.supervisor = services.NewSupervisor(appServices.kubeClient, resourceNamespace, appServices.cqlStore, logger, nil)
 	}
 
 	return appServices
