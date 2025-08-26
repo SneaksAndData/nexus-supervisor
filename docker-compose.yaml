@@ -1,0 +1,29 @@
+version: '3.3'
+
+services:
+  scylla:
+    container_name: scylla
+    image: scylladb/scylla
+    network_mode: host
+    command:
+      - "--listen-address"
+      - "127.0.0.1"
+      - "--smp"
+      - "1"
+    healthcheck:
+      test: ["CMD-SHELL", "[ $$(nodetool statusgossip) = running ]"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  prepare_scylla:
+    container_name: scylla-setup
+    image: scylladb/scylla
+    network_mode: host
+    volumes:
+      - ./test-resources/:/opt/storage
+    depends_on:
+      scylla:
+        condition: service_healthy
+    entrypoint:
+      - /opt/storage/prepare-scylla.sh
