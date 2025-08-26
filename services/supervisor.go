@@ -121,8 +121,10 @@ func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 		"Pod": c.podInformer,
 	}
 
-	_, eventErr := c.eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, eventErr := c.eventInformer.AddEventHandlerWithOptions(cache.ResourceEventHandlerFuncs{
 		AddFunc: c.onEvent,
+	}, cache.HandlerOptions{
+		Logger: &c.logger,
 	})
 
 	if eventErr != nil {
@@ -133,6 +135,7 @@ func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 }
 
 func (c *Supervisor) onEvent(obj interface{}) {
+	c.logger.V(4).Info("event received", "object", obj)
 	_, err := cache.ObjectToName(obj)
 	if err != nil { // coverage-ignore
 		utilruntime.HandleError(err)
