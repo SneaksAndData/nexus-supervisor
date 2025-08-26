@@ -18,6 +18,7 @@ import (
 )
 
 var noResyncPeriod = time.Second * 0
+var alwaysReady = func() bool { return true }
 
 type fixture struct {
 	supervisor *Supervisor
@@ -37,10 +38,7 @@ func newFixture(t *testing.T, k8sObjects []runtime.Object) *fixture {
 			Hosts: []string{"127.0.0.1"},
 		})
 	f.kubeClient = fake.NewClientset(k8sObjects...)
-
-	time.Sleep(time.Second)
-
-	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.cqlStore, klog.FromContext(f.ctx), &noResyncPeriod)
+	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.cqlStore, klog.FromContext(f.ctx), &noResyncPeriod, &alwaysReady)
 
 	return f
 }
@@ -553,11 +551,11 @@ func TestSupervisor(t *testing.T) {
 
 	f := newFixture(t, k8sObjects)
 	err := f.supervisor.Init(f.ctx, &ProcessingConfig{
-		FailureRateBaseDelay:       time.Second,
-		FailureRateMaxDelay:        time.Second * 2,
-		RateLimitElementsPerSecond: 1000,
-		RateLimitElementsBurst:     1000,
-		Workers:                    1,
+		FailureRateBaseDelay:       time.Millisecond * 100,
+		FailureRateMaxDelay:        time.Second,
+		RateLimitElementsPerSecond: 10,
+		RateLimitElementsBurst:     10,
+		Workers:                    4,
 	})
 
 	time.Sleep(time.Second)
