@@ -48,6 +48,8 @@ spec:
           {{- if .Values.supervisor.config.enabled }}
             - name: NEXUS__RESOURCE_NAMESPACE              
               value: {{ .Values.supervisor.config.resourceNamespace }}
+            - name: NEXUS__CQL_STORE_TYPE
+              value: {{ .Values.supervisor.config.cqlStore.type }}
             - name: NEXUS__LOG_LEVEL
               value: {{ .Values.logging.level }}            
             - name: NEXUS__FAILURE_RATE_BASE_DELAY
