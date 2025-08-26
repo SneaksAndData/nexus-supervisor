@@ -249,6 +249,12 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		return analysisResult.ObjectUID, err
 	}
 
+	// no action should be take for cancelled runs, even if an event is received
+	if checkpoint.IsFinished() {
+		c.logger.V(0).Info("algorithm run completed, skipping action", "algorithm", analysisResult.Algorithm, "requestId", analysisResult.RequestId)
+		return analysisResult.ObjectUID, nil
+	}
+
 	checkpointClone := checkpoint.DeepCopy()
 
 	switch analysisResult.Action {

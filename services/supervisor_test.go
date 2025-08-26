@@ -470,7 +470,75 @@ func validatePodBackOffObjects(f *fixture, recordId string, t *testing.T) {
 		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageFailed, result.LifecycleStage)
 		t.FailNow()
 	}
+}
 
+func getPodStartedForCancelled(recordId string) []runtime.Object {
+	event := &corev1.Event{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Event",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod-started-but-cancelled",
+			Namespace: "nexus",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:      "Pod",
+			Name:      fmt.Sprintf("%s-acdey", recordId),
+			Namespace: "nexus",
+		},
+		Reason:  "Started",
+		Message: "",
+	}
+	job := &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Job",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      recordId,
+			Namespace: "nexus",
+			Labels: map[string]string{
+				models.NexusComponentLabel: models.JobLabelAlgorithmRun,
+				models.JobTemplateNameKey:  "test-algorithm",
+			},
+		},
+		Spec: batchv1.JobSpec{},
+	}
+	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-acdey", recordId),
+			Namespace: "nexus",
+			Labels: map[string]string{
+				models.NexusComponentLabel:     models.JobLabelAlgorithmRun,
+				models.JobTemplateNameKey:      "test-algorithm",
+				"batch.kubernetes.io/job-name": recordId,
+			},
+		},
+		Spec: corev1.PodSpec{},
+	}
+
+	return []runtime.Object{event, job, pod}
+}
+
+func validatePodStartedButCancelled(f *fixture, recordId string, t *testing.T) {
+	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	if err != nil {
+		t.Errorf("cannot read a checkpoint %v", err)
+		t.FailNow()
+	}
+	if result == nil {
+		t.Errorf("result should not be nil for %s", recordId)
+		t.FailNow()
+	}
+	if result.LifecycleStage != models.LifecycleStageCancelled {
+		t.Errorf("lifecycle stage should be %s, but is %s", models.LifecycleStageCancelled, result.LifecycleStage)
+		t.FailNow()
+	}
 }
 
 func TestSupervisor(t *testing.T) {
@@ -481,6 +549,7 @@ func TestSupervisor(t *testing.T) {
 	k8sObjects = append(k8sObjects, getPodOutOfMemoryObjects("1d7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")...)
 	k8sObjects = append(k8sObjects, getPodFailedObjects("9e7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")...)
 	k8sObjects = append(k8sObjects, getPodBackOffObjects("6a4b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")...)
+	k8sObjects = append(k8sObjects, getPodStartedForCancelled("df1b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b")...)
 
 	f := newFixture(t, k8sObjects)
 	err := f.supervisor.Init(f.ctx, &ProcessingConfig{
@@ -507,6 +576,7 @@ func TestSupervisor(t *testing.T) {
 	validatePodOutOfMemoryObjects(f, "1d7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b", t)
 	validatePodFailedObjects(f, "9e7b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b", t)
 	validatePodBackOffObjects(f, "6a4b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b", t)
+	validatePodStartedButCancelled(f, "df1b6e8d-cc3c-fb5b-a3f6-5d7b9e2c7f2b", t)
 
 	f.finish()
 }
