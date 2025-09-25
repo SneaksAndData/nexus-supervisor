@@ -14,7 +14,7 @@ func main() {
 	appConfig := nexusconf.LoadConfig[app.SupervisorConfig](ctx)
 	appLogger, err := telemetry.ConfigureLogger(ctx, map[string]string{}, appConfig.LogLevel)
 
-	ctx = telemetry.WithStatsd(ctx, "nexus_receiver")
+	ctx = telemetry.WithStatsd(ctx, "nexus_supervisor")
 
 	klog.SetSlogLogger(appLogger)
 	logger := klog.FromContext(ctx)
