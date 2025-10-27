@@ -359,12 +359,17 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 
 		return analysisResult.ObjectUID, nil
 	case ToRunning:
-		checkpointClone.LifecycleStage = models.LifecycleStageRunning
-		// transition from buffered to running
-		err := c.cqlStore.UpsertCheckpoint(checkpointClone)
-		if err != nil { // coverage-ignore
-			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
-			return analysisResult.ObjectUID, err
+		// only update the checkpoint if the scheduler failed to do so
+		if checkpoint.LifecycleStage != models.LifecycleStageRunning {
+			checkpointClone.LifecycleStage = models.LifecycleStageRunning
+			// transition from buffered to running
+			err := c.cqlStore.UpsertCheckpoint(checkpointClone)
+			if err != nil { // coverage-ignore
+				c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+				return analysisResult.ObjectUID, err
+			}
+
+			return analysisResult.ObjectUID, nil
 		}
 
 		return analysisResult.ObjectUID, nil
