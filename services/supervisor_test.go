@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
-	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store"
+	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store/cassandra"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,11 +23,11 @@ var noResyncPeriod = time.Second * 0
 var alwaysReady = func() bool { return true }
 
 type fixture struct {
-	supervisor *Supervisor
-	ctx        context.Context
-	finish     context.CancelFunc
-	kubeClient kubernetes.Interface
-	cqlStore   *request.CqlStore
+	supervisor      *Supervisor
+	ctx             context.Context
+	finish          context.CancelFunc
+	kubeClient      kubernetes.Interface
+	checkpointStore store.CheckpointStore
 }
 
 func newFixture(t *testing.T, k8sObjects []runtime.Object) *fixture {
@@ -34,12 +35,15 @@ func newFixture(t *testing.T, k8sObjects []runtime.Object) *fixture {
 	f := &fixture{}
 
 	f.ctx, f.finish = context.WithCancel(ctx)
-	f.cqlStore = request.NewScyllaCqlStore(
-		klog.FromContext(ctx), &request.ScyllaCqlStoreConfig{
-			Hosts: []string{"127.0.0.1"},
+	f.checkpointStore = cassandra.NewScyllaStore(
+		klog.FromContext(ctx), &cassandra.ScyllaConfig{
+			Hosts:            []string{"127.0.0.1"},
+			Port:             "30042",
+			Keyspace:         "nexus",
+			IndexesSupported: true,
 		})
 	f.kubeClient = fake.NewClientset(k8sObjects...)
-	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.cqlStore, klog.FromContext(f.ctx), &noResyncPeriod, &alwaysReady)
+	f.supervisor = NewSupervisor(f.kubeClient, "nexus", f.checkpointStore, klog.FromContext(f.ctx), &noResyncPeriod, &alwaysReady)
 
 	return f
 }
