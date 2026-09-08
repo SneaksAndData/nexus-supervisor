@@ -47,7 +47,7 @@ spec:
               value: "{{ (default (printf "v%s" .Chart.AppVersion) .Values.image.tag) }}"
           {{- if .Values.supervisor.config.enabled }}
             - name: NEXUS__RESOURCE_NAMESPACE              
-              value: {{ .Values.supervisor.config.resourceNamespace default .Release.Namespace }}
+              value: {{ .Values.supervisor.config.resourceNamespace | default .Release.Namespace }}
             - name: NEXUS__CQL_STORE_TYPE
               value: {{ .Values.supervisor.config.checkpointStore.type }}
             - name: NEXUS__LOG_LEVEL

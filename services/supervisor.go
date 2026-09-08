@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store"
 	"github.com/SneaksAndData/nexus-core/pkg/pipeline"
 	"github.com/SneaksAndData/nexus-core/pkg/resolvers"
+	"github.com/SneaksAndData/nexus-core/pkg/telemetry"
 	"github.com/SneaksAndData/nexus-core/pkg/util"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -103,7 +105,7 @@ func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlSto
 }
 
 // Init starts informers and sync the cache
-func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
+func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
 		"supervisor",
 		map[string]string{},
@@ -112,7 +114,9 @@ func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 		config.RateLimitElementsPerSecond,
 		config.RateLimitElementsBurst,
 		config.Workers,
-		c.superviseAction,
+		func(element *RunStatusAnalysisResult) (types.UID, error) {
+			return c.superviseAction(element, telemetry.GetClient(ctx))
+		},
 		func(element *RunStatusAnalysisResult) {},
 		nil,
 	)
@@ -259,7 +263,7 @@ func (c *Supervisor) onEvent(obj interface{}) {
 	}
 }
 
-func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
+func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult, metrics *statsd.Client) (types.UID, error) {
 	propagationPolicy := metav1.DeletePropagationBackground
 
 	checkpoint, err := c.checkpointStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
@@ -273,7 +277,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		return analysisResult.ObjectUID, err
 	}
 
-	// no action should be take for cancelled runs, even if an event is received
+	// no action should be taken for cancelled runs, even if an event is received
 	if checkpoint.IsFinished() {
 		c.logger.V(0).Info("algorithm run completed, skipping action", "algorithm", analysisResult.Algorithm, "requestId", analysisResult.RequestId)
 		return analysisResult.ObjectUID, nil
@@ -306,6 +310,8 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			return analysisResult.ObjectUID, err
 		}
 
+		telemetry.Increment(metrics, "errors.fatal.unschedulable", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
+
 		return analysisResult.ObjectUID, nil
 
 	case ToFailFatalError:
@@ -316,6 +322,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			PropagationPolicy: &propagationPolicy,
 		})
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.deletion_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -329,9 +336,12 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err = c.checkpointStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.status_update_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
+
+		telemetry.Increment(metrics, "errors.fatal.non_recoverable", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 
 		return analysisResult.ObjectUID, nil
 	case ToFailDeadlineExceeded:
@@ -341,6 +351,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			PropagationPolicy: &propagationPolicy,
 		})
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.deletion_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -354,9 +365,12 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		err = c.checkpointStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.status_update_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
+
+		telemetry.Increment(metrics, "errors.fatal.deadline_exceeded", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 
 		return analysisResult.ObjectUID, nil
 	case ToRunning:
