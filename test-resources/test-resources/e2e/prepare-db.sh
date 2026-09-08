@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+cqlsh localhost -e "CREATE KEYSPACE nexus WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': 1 } AND tablets = { 'enabled': false };"
+
+echo 'Applying checkpoints table'
+
+cqlsh localhost -f /opt/storage/checkpoints.cql
+
+echo 'Applying checkpoints_by_host table'
+
+cqlsh localhost -f /opt/storage/checkpoints_by_host.cql
+
+echo 'Checking table'
+
+cqlsh localhost -e 'SELECT * FROM nexus.checkpoints_by_host'
+
+echo 'Applying checkpoints_by_tag table'
+
+cqlsh localhost -f /opt/storage/checkpoints_by_tag.cql
+
+echo 'Checking table'
+
+cqlsh localhost -e 'SELECT * FROM nexus.checkpoints_by_tag'
+

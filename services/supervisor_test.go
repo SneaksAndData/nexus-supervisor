@@ -3,6 +3,9 @@ package services
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
 	batchv1 "k8s.io/api/batch/v1"
@@ -13,8 +16,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
-	"testing"
-	"time"
 )
 
 var noResyncPeriod = time.Second * 0
@@ -82,7 +83,7 @@ func getFailedCreateObjects(recordId string) []runtime.Object {
 }
 
 func validateFailedCreateObjects(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
@@ -184,8 +185,8 @@ func getDeadlinedJobObjects(deadlinedId string, backoffId string) []runtime.Obje
 }
 
 func validateDeadlinedJobObjects(f *fixture, deadlinedId string, backoffId string, t *testing.T) {
-	result1, err1 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", deadlinedId)
-	result2, err2 := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", backoffId)
+	result1, err1 := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", deadlinedId)
+	result2, err2 := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", backoffId)
 
 	if err1 != nil {
 		t.Errorf("cannot read a checkpoint %v", err1)
@@ -253,7 +254,7 @@ func getPodStartedObjects(recordId string) []runtime.Object {
 }
 
 func validatePodStartedObjects(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
@@ -310,7 +311,7 @@ func getPodOutOfMemoryObjects(recordId string) []runtime.Object {
 }
 
 func validatePodOutOfMemoryObjects(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
@@ -384,7 +385,7 @@ func getPodFailedObjects(recordId string) []runtime.Object {
 }
 
 func validatePodFailedObjects(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
 		t.FailNow()
@@ -455,7 +456,7 @@ func getPodBackOffObjects(recordId string) []runtime.Object {
 }
 
 func validatePodBackOffObjects(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
 		t.FailNow()
@@ -524,7 +525,7 @@ func getPodStartedForCancelled(recordId string) []runtime.Object {
 }
 
 func validatePodStartedButCancelled(f *fixture, recordId string, t *testing.T) {
-	result, err := f.supervisor.cqlStore.ReadCheckpoint("test-algorithm", recordId)
+	result, err := f.supervisor.checkpointStore.ReadCheckpoint("test-algorithm", recordId)
 	if err != nil {
 		t.Errorf("cannot read a checkpoint %v", err)
 		t.FailNow()
