@@ -292,7 +292,7 @@ func getPodOutOfMemoryObjects(recordId string) []runtime.Object {
 			Namespace: "nexus",
 		},
 		Reason:  "PodFailurePolicy",
-		Message: "",
+		Message: "Container exited with code 137",
 	}
 
 	job := &batchv1.Job{

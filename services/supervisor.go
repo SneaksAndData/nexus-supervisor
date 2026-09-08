@@ -267,13 +267,18 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult, me
 	propagationPolicy := metav1.DeletePropagationBackground
 
 	checkpoint, err := c.checkpointStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
-	if err != nil { // coverage-ignore
+	if checkpoint == nil { // coverage-ignore
 		c.logger.V(0).Error(err, "no checkpoint exists for the provided request, job will be deleted without metadata saved", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 
 		_ = c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
 			PropagationPolicy: &propagationPolicy,
 		})
 
+		return analysisResult.ObjectUID, err
+	}
+
+	if err != nil {
+		c.logger.V(0).Error(err, "error reading supervised checkpoint, skipping", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 		return analysisResult.ObjectUID, err
 	}
 

@@ -78,8 +78,8 @@ deploy-chart indexes="true":
         --set image.repository={{NEXUS_CHART_IMAGE_NAME}} \
         --set image.tag={{NEXUS_CHART_IMAGE_TAG}} \
         --set image.pullPolicy=Never \
-        --set receiver.config.checkpointStore.type=cassandra-scylla \
-        --set receiver.config.checkpointStore.secretName="cassandra-credentials"
+        --set supervisor.config.checkpointStore.type=cassandra-scylla \
+        --set supervisor.config.checkpointStore.secretName="cassandra-credentials"
 
 # switch Cassandra store index mode and rollout deployment
 switch-store-indexes indexes="false":
