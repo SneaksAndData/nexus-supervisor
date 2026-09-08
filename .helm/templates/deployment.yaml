@@ -47,9 +47,9 @@ spec:
               value: "{{ (default (printf "v%s" .Chart.AppVersion) .Values.image.tag) }}"
           {{- if .Values.supervisor.config.enabled }}
             - name: NEXUS__RESOURCE_NAMESPACE              
-              value: {{ .Values.supervisor.config.resourceNamespace }}
+              value: {{ .Values.supervisor.config.resourceNamespace | default .Release.Namespace }}
             - name: NEXUS__CQL_STORE_TYPE
-              value: {{ .Values.supervisor.config.cqlStore.type }}
+              value: {{ .Values.supervisor.config.checkpointStore.type }}
             - name: NEXUS__LOG_LEVEL
               value: {{ .Values.logging.level }}            
             - name: NEXUS__FAILURE_RATE_BASE_DELAY
@@ -105,12 +105,12 @@ spec:
           {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
-        {{- if .Values.extraEnvFrom }}
-          envFrom:       
-          {{- if .Values.supervisor.config.cqlStore.secretRefEnabled }}
+          envFrom:
+          {{- if .Values.supervisor.config.checkpointStore.secretRefEnabled }}
             - secretRef:
-                name: {{ .Values.supervisor.config.cqlStore.secretName }}
+                name: {{ required "checkpointStore.secretName must be non-empty when checkpointStore.secretRefEnabled is true" .Values.supervisor.config.checkpointStore.secretName }}
           {{- end }}
+        {{- if .Values.extraEnvFrom }}
           {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
           {{- end }}

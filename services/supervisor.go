@@ -3,10 +3,14 @@ package services
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/models"
-	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store"
 	"github.com/SneaksAndData/nexus-core/pkg/pipeline"
 	"github.com/SneaksAndData/nexus-core/pkg/resolvers"
+	"github.com/SneaksAndData/nexus-core/pkg/telemetry"
 	"github.com/SneaksAndData/nexus-core/pkg/util"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -17,7 +21,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	"time"
 )
 
 type Supervisor struct {
@@ -34,7 +37,7 @@ type Supervisor struct {
 
 	kubeClient           kubernetes.Interface
 	resourceNamespace    string
-	cqlStore             *request.CqlStore
+	checkpointStore      store.CheckpointStore
 	elementReceiverActor *pipeline.DefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID]
 }
 
@@ -66,9 +69,8 @@ type RunStatusAnalysisResult struct {
 }
 
 // NewSupervisor creates a new cache + resource watcher for pod and job resources
-func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlStore *request.CqlStore, logger klog.Logger, resyncPeriod *time.Duration, syncState *func() bool) *Supervisor {
-	defaultResyncPeriod := time.Second * 30
-	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, *util.CoalescePointer(resyncPeriod, &defaultResyncPeriod), kubeinformers.WithNamespace(resourceNamespace))
+func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlStore store.CheckpointStore, logger klog.Logger, resyncPeriod *time.Duration, syncState *func() bool) *Supervisor {
+	factory := kubeinformers.NewSharedInformerFactoryWithOptions(client, *util.CoalescePointer(resyncPeriod, new(time.Second*30)), kubeinformers.WithNamespace(resourceNamespace))
 
 	eventInformer := factory.Core().V1().Events().Informer()
 	podInformer := factory.Core().V1().Pods().Informer()
@@ -97,13 +99,13 @@ func NewSupervisor(client kubernetes.Interface, resourceNamespace string, cqlSto
 		podInformerSynced:   podInformerSynced,
 		jobInformerSynced:   jobInformerSynced,
 
-		cqlStore:             cqlStore,
+		checkpointStore:      cqlStore,
 		elementReceiverActor: nil,
 	}
 }
 
 // Init starts informers and sync the cache
-func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
+func (c *Supervisor) Init(ctx context.Context, config *ProcessingConfig) error {
 	c.elementReceiverActor = pipeline.NewDefaultPipelineStageActor[*RunStatusAnalysisResult, types.UID](
 		"supervisor",
 		map[string]string{},
@@ -112,7 +114,10 @@ func (c *Supervisor) Init(_ context.Context, config *ProcessingConfig) error {
 		config.RateLimitElementsPerSecond,
 		config.RateLimitElementsBurst,
 		config.Workers,
-		c.superviseAction,
+		func(element *RunStatusAnalysisResult) (types.UID, error) {
+			return c.superviseAction(element, telemetry.GetClient(ctx))
+		},
+		func(element *RunStatusAnalysisResult) {},
 		nil,
 	)
 
@@ -258,11 +263,11 @@ func (c *Supervisor) onEvent(obj interface{}) {
 	}
 }
 
-func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (types.UID, error) {
+func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult, metrics *statsd.Client) (types.UID, error) {
 	propagationPolicy := metav1.DeletePropagationBackground
 
-	checkpoint, err := c.cqlStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
-	if err != nil { // coverage-ignore
+	checkpoint, err := c.checkpointStore.ReadCheckpoint(analysisResult.Algorithm, analysisResult.RequestId)
+	if checkpoint == nil { // coverage-ignore
 		c.logger.V(0).Error(err, "no checkpoint exists for the provided request, job will be deleted without metadata saved", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 
 		_ = c.kubeClient.BatchV1().Jobs(c.resourceNamespace).Delete(context.TODO(), analysisResult.RequestId, metav1.DeleteOptions{
@@ -272,7 +277,12 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		return analysisResult.ObjectUID, err
 	}
 
-	// no action should be take for cancelled runs, even if an event is received
+	if err != nil {
+		c.logger.V(0).Error(err, "error reading supervised checkpoint, skipping", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
+		return analysisResult.ObjectUID, err
+	}
+
+	// no action should be taken for cancelled runs, even if an event is received
 	if checkpoint.IsFinished() {
 		c.logger.V(0).Info("algorithm run completed, skipping action", "algorithm", analysisResult.Algorithm, "requestId", analysisResult.RequestId)
 		return analysisResult.ObjectUID, nil
@@ -298,12 +308,14 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm submission was buffered, but failed to launch on the target cluster: %s", analysisResult.RunStatusMessage)
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
-		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+		err = c.checkpointStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil { // coverage-ignore
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
+
+		telemetry.Increment(metrics, "errors.fatal.unschedulable", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 
 		return analysisResult.ObjectUID, nil
 
@@ -315,6 +327,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			PropagationPolicy: &propagationPolicy,
 		})
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.deletion_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -325,12 +338,15 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		checkpointClone.AlgorithmFailureCause = fmt.Sprintf("Algorithm encountered a fatal error during execution: %s", analysisResult.RunStatusMessage)
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
-		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+		err = c.checkpointStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.status_update_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
+
+		telemetry.Increment(metrics, "errors.fatal.non_recoverable", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 
 		return analysisResult.ObjectUID, nil
 	case ToFailDeadlineExceeded:
@@ -340,6 +356,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 			PropagationPolicy: &propagationPolicy,
 		})
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.deletion_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to delete an algorithm submission", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
@@ -350,12 +367,15 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		checkpointClone.AlgorithmFailureCause = analysisResult.RunStatusMessage
 		checkpointClone.AlgorithmFailureDetails = analysisResult.RunStatusTrace
 
-		err = c.cqlStore.UpsertCheckpoint(checkpointClone)
+		err = c.checkpointStore.UpsertCheckpoint(checkpointClone)
 
 		if err != nil { // coverage-ignore
+			telemetry.Increment(metrics, "errors.fatal.status_update_failures", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 			c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 			return analysisResult.ObjectUID, err
 		}
+
+		telemetry.Increment(metrics, "errors.fatal.deadline_exceeded", map[string]string{"algorithm": analysisResult.Algorithm, "requestId": analysisResult.RequestId})
 
 		return analysisResult.ObjectUID, nil
 	case ToRunning:
@@ -363,7 +383,7 @@ func (c *Supervisor) superviseAction(analysisResult *RunStatusAnalysisResult) (t
 		if checkpoint.LifecycleStage != models.LifecycleStageRunning {
 			checkpointClone.LifecycleStage = models.LifecycleStageRunning
 			// transition from buffered to running
-			err := c.cqlStore.UpsertCheckpoint(checkpointClone)
+			err := c.checkpointStore.UpsertCheckpoint(checkpointClone)
 			if err != nil { // coverage-ignore
 				c.logger.V(0).Error(err, "failed to update algorithm submission status", "requestId", analysisResult.RequestId, "algorithm", analysisResult.Algorithm)
 				return analysisResult.ObjectUID, err

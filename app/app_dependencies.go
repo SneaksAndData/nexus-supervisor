@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
-	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/request"
+
+	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store"
+	"github.com/SneaksAndData/nexus-core/pkg/checkpoint/store/cassandra"
 	"github.com/SneaksAndData/nexus-supervisor/services"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -10,24 +12,33 @@ import (
 )
 
 type ApplicationServices struct {
-	cqlStore   *request.CqlStore
+	cqlStore   store.CheckpointStore
 	kubeClient *kubernetes.Clientset
 	supervisor *services.Supervisor
 }
 
-func (appServices *ApplicationServices) WithAstraCqlStore(ctx context.Context, bundleConfig *request.AstraBundleConfig) *ApplicationServices {
+func (appServices *ApplicationServices) WithAstraCqlStore(ctx context.Context, bundleConfig *cassandra.AstraBundleConfig) *ApplicationServices {
 	if appServices.cqlStore == nil {
 		logger := klog.FromContext(ctx)
-		appServices.cqlStore = request.NewAstraCqlStore(logger, bundleConfig)
+		appServices.cqlStore = cassandra.NewAstraStore(logger, bundleConfig)
 	}
 
 	return appServices
 }
 
-func (appServices *ApplicationServices) WithScyllaCqlStore(ctx context.Context, config *request.ScyllaCqlStoreConfig) *ApplicationServices {
+func (appServices *ApplicationServices) WithScyllaCqlStore(ctx context.Context, config *cassandra.ScyllaConfig) *ApplicationServices {
 	if appServices.cqlStore == nil {
 		logger := klog.FromContext(ctx)
-		appServices.cqlStore = request.NewScyllaCqlStore(logger, config)
+		appServices.cqlStore = cassandra.NewScyllaStore(logger, config)
+	}
+
+	return appServices
+}
+
+func (appServices *ApplicationServices) WithKeyspacesCqlStore(ctx context.Context, config *cassandra.KeyspacesConfig) *ApplicationServices {
+	if appServices.cqlStore == nil {
+		logger := klog.FromContext(ctx)
+		appServices.cqlStore = cassandra.NewKeyspacesStore(logger, config)
 	}
 
 	return appServices
@@ -61,7 +72,7 @@ func (appServices *ApplicationServices) WithSupervisor(ctx context.Context, reso
 	return appServices
 }
 
-func (appServices *ApplicationServices) CqlStore() *request.CqlStore {
+func (appServices *ApplicationServices) CheckpointStore() store.CheckpointStore {
 	return appServices.cqlStore
 }
 

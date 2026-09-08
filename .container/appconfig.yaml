@@ -2,13 +2,24 @@ astra-cql-store:
   secure-connection-bundle-base64: ""
   gateway-user: ""
   gateway-password: ""
+  keyspace: ""
+  indexes-supported: true
 scylla-cql-store:
   hosts: []
   port: ""
   user: ""
   password: ""
   local-dc: ""
-cql-store-type: scylla
+  keyspace: ""
+  indexes-supported: true
+keyspaces-cql-store:
+  hosts: []
+  port: ""
+  ca-path: ""
+  region: ""
+  keyspace: ""
+  use-irsa: false
+cql-store-type: cassandra-scylla
 kube-config-path: ""
 resource-namespace: ""
 log-level: ""

@@ -126,11 +126,11 @@ supervisor:
          
   # Individual settings can be overridden using environment variables
   # Whole config can also be overridden by setting config.enabled=false and mounting a new appconfig.yaml to /app path in the container
-  config:   
+  config:
     enabled: true
     # Main resource namespace
     # Override with: NEXUS__RESOURCE_NAMESPACE
-    resourceNamespace: "nexus"
+    resourceNamespace:
     
     # optional path to kubeconfig for the controller cluster
     # defaults to in-cluster config
@@ -160,14 +160,13 @@ supervisor:
       # Override with: NEXUS__WORKERS      
       workers: 2    
     
-    cqlStore:
-      # type of CqlStore to use. Support options: `astra`, `scylla`
-      type: astra
+    checkpointStore:
+      # type of checkpointStore to use. Support options: `cassandra-astra`, `cassandra-scylla`, `cassandra-keyspaces`
+      type: cassandra-keyspaces
       # Enable mounting Cassandra credentials from a secret
       secretRefEnabled: true
-      
-      # Name of a secret containing Cassandra credentials
-      # Example content:
+
+      # Example for AstraDB:
       #  apiVersion: v1
       #  kind: Secret
       #  metadata:
@@ -175,13 +174,48 @@ supervisor:
       #    namespace: nexus
       #  data:
       #    AstraDB specific setting, contains base64-encoded bundle zip. Leave empty for other Cassandra installations
-      #    Support for Scylla and Apache OSS (generic Cassandra) is coming in the production release
-      #    NEXUS__CQL_STORE__SECURE_CONNECTION_BUNDLE_BASE64: base64value
-      #    NEXUS__CQL_STORE__GATEWAY_USER: user
-      #    NEXUS__CQL_STORE__GATEWAY_PASSWORD: password
+      #    NEXUS__ASTRA_CQL_STORE__SECURE_CONNECTION_BUNDLE_BASE64: base64value
+      #    NEXUS__ASTRA_CQL_STORE__GATEWAY_USER: user
+      #    NEXUS__ASTRA_CQL_STORE__GATEWAY_PASSWORD: password
+      #    NEXUS__ASTRA_CQL_STORE__INDEXES_SUPPORTED: true
+      #    NEXUS__ASTRA_CQL_STORE__KEYSPACE: nexus
       #  type: Opaque
-      
-      secretName: ""
+
+      # Example for Scylla:
+      #  apiVersion: v1
+      #  kind: Secret
+      #  metadata:
+      #    name: cassandra-credentials
+      #    namespace: nexus
+      #  data:
+      #    NEXUS__SCYLLA_CQL_STORE__HOSTS: 1.2.3.4,1.2.3.5
+      #    NEXUS__SCYLLA_CQL_STORE__USER: user
+      #    NEXUS__SCYLLA_CQL_STORE__PASSWORD: password
+      #    NEXUS__SCYLLA_CQL_STORE__INDEXES_SUPPORTED: true
+      #    NEXUS__SCYLLA_CQL_STORE__KEYSPACE: nexus
+      #  type: Opaque
+
+      # Example for Keyspaces:
+      #  apiVersion: v1
+      #  kind: Secret
+      #  metadata:
+      #    name: cassandra-credentials
+      #    namespace: nexus
+      #  data:
+      #    NEXUS__KEYSPACES_CQL_STORE__HOSTS: cassandra.us-east-1.amazonaws.com
+      #    NEXUS__KEYSPACES_CQL_STORE__PORT: 9142
+      #    NEXUS__KEYSPACES_CQL_STORE__REGION: us-east-1
+      #    NEXUS__KEYSPACES_CQL_STORE__CA_PATH: /opt/keyspaces/ca
+      #    NEXUS__KEYSPACES_CQL_STORE__KEYSPACE: nexus
+      #    KEYSPACES_AWS_ACCESS_KEY_ID: accessKeyId
+      #    KEYSPACES_AWS_SECRET_ACCESS_KEY: secret
+      #  type: Opaque
+      #
+
+      # Helm chart will create a separate ConfigMap `nexus-keyspaces-ca` which contains public certificate you must use when `type` is `keyspaces`.
+      deployKeyspacesCertificates: false
+
+      secretName:
 
     
 # Observability settings for Datadog
