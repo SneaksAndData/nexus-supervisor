@@ -3,7 +3,8 @@ module github.com/SneaksAndData/nexus-supervisor
 go 1.26.0
 
 require (
-	github.com/SneaksAndData/nexus-core v1.4.5-0.20260908112559-b4acfde897e0
+	github.com/DataDog/datadog-go/v5 v5.9.0
+	github.com/SneaksAndData/nexus-core v1.4.5-0.20260909143802-1a5600268e56
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
@@ -12,7 +13,6 @@ require (
 
 require (
 	github.com/DataDog/datadog-api-client-go/v2 v2.61.0 // indirect
-	github.com/DataDog/datadog-go/v5 v5.9.0 // indirect
 	github.com/DataDog/zstd v1.5.7 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
